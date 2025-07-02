@@ -10,8 +10,8 @@ class AnalistaBase(BaseModel):
     email: str
     bms_id: int = Field(
         ...,
-        ge=1000000,      # Mayor que 999 (mínimo 4 dígitos)
-        le=9999999, # Menor que 100,000,000 (máximo 8 dígitos)
+        ge=10000,      # Mayor que 999 (mínimo 4 dígitos)
+        le=999999, # Menor que 100,000,000 (máximo 8 dígitos)
         description="Código único de legajo del analista (BMS ID), entero de 4 a 8 dígitos"
     )
 
