@@ -1,10 +1,27 @@
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List, Optional # Asegúrate de importar Optional
+from sqlalchemy.future import select # Asegúrate de que esta línea esté presente
+from typing import Optional, List # Asegúrate de que estas líneas estén presente
+from sql_app import models
+
+# Importa los modelos Pydantic (tus esquemas para la API)
+from schemas.models import (
+    AnalistaBase, Analista,
+    CampanaBase, Campana,
+    TareaBase, Tarea,
+    # Asegúrate de incluir todos los modelos Pydantic que uses, como ProgresoTarea si lo usas directamente
+    # ProgresoTarea,
+    # ChecklistItemBase, ChecklistItem,
+    # ComentarioCampanaBase, ComentarioCampana,
+    # AvisoBase, Aviso
+)
+
+from database import get_db
+
+app = FastAPI()
 
 # Importamos los modelos de Pydantic (para la API)
-from models import (
+from schemas.models import (
     AnalistaBase, Analista,
     CampanaBase, Campana,
     TareaBase, Tarea, # <-- NUEVAS IMPORTACIONES
@@ -146,6 +163,55 @@ async def obtener_campana_por_id(campana_id: int, db: AsyncSession = Depends(get
     if not campana:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
     return Campana.model_validate(campana)
+
+@app.put("/campanas/{campana_id}", response_model=Campana, summary="Actualizar una Campaña existente")
+async def actualizar_campana(campana_id: int, campana: CampanaBase, db: AsyncSession = Depends(get_db)):
+    """
+    Actualiza la información de una campaña existente.
+
+    - **campana_id**: El ID de la campaña a actualizar.
+    - **campana**: Objeto CampanaBase con los datos actualizados (nombre, descripción, fecha_inicio, fecha_fin).
+    """
+    db_campana = await db.execute(select(models.Campana).where(models.Campana.id == campana_id))
+    campana_existente = db_campana.scalar_one_or_none()
+
+    if campana_existente is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada")
+
+    # Actualizar los campos. Pydantic ya validó los datos entrantes.
+    campana_existente.nombre = campana.nombre
+    campana_existente.descripcion = campana.descripcion
+    campana_existente.fecha_inicio = campana.fecha_inicio
+    campana_existente.fecha_fin = campana.fecha_fin
+
+    await db.commit()
+    await db.refresh(campana_existente) # Refresca el objeto para obtener los datos actualizados de la DB
+    return campana_existente
+
+
+@app.delete("/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Campaña")
+async def eliminar_campana(campana_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Elimina una campaña existente.
+
+    - **campana_id**: El ID de la campaña a eliminar.
+    """
+    db_campana = await db.execute(select(models.Campana).where(models.Campana.id == campana_id))
+    campana_a_eliminar = db_campana.scalar_one_or_none()
+
+    if campana_a_eliminar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada")
+
+    # Si hay relaciones que impiden el borrado (ej. tareas asociadas),
+    # podrías manejarlo aquí o dejar que la base de datos lance un error (FOREIGN KEY constraint).
+    # Para este ejemplo, asumimos que no hay restricciones que impidan el borrado directo
+    # o que la base de datos está configurada con CASCADE DELETE si es el caso.
+    # En un sistema real, querrías una lógica más robusta para evitar borrar algo con dependencias.
+
+    await db.delete(campana_a_eliminar)
+    await db.commit()
+    # No hay necesidad de refresh si el objeto se va a eliminar.
+    return {"message": "Campaña eliminada exitosamente"} # Retorna un mensaje si es necesario, o un 204 No Content
 
 # --- Endpoints para Tareas ---
 
