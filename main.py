@@ -12,8 +12,8 @@ from schemas.models import (
     # Asegúrate de incluir todos los modelos Pydantic que uses, como ProgresoTarea si lo usas directamente
     # ProgresoTarea,
     ChecklistItemBase, ChecklistItem,
-    # ComentarioCampanaBase, ComentarioCampana,
-    # AvisoBase, Aviso
+    ComentarioCampanaBase, ComentarioCampana,
+    AvisoBase, Aviso
 )
 
 from database import get_db
@@ -497,5 +497,142 @@ async def eliminar_comentario_campana(comentario_id: int, db: AsyncSession = Dep
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comentario de Campaña no encontrado.")
 
     await db.delete(comentario_a_eliminar)
+    await db.commit()
+    return # Retorna 204 No Content
+
+
+@app.post("/avisos/", response_model=Aviso, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Aviso")
+async def crear_aviso(
+    aviso: AvisoBase,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Crea un nuevo aviso.
+
+    - **aviso**: Objeto AvisoBase con el título, contenido, fecha de vencimiento (opcional),
+                 ID del creador (analista) y ID de la campaña (opcional).
+    """
+    # Verificar si el creador_id (analista) existe
+    creador_existente = await db.execute(select(models.Analista).where(models.Analista.id == aviso.creador_id))
+    if creador_existente.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista creador no encontrado.")
+
+    # Verificar si la campana_id existe, si se proporciona
+    if aviso.campana_id:
+        campana_existente = await db.execute(select(models.Campana).where(models.Campana.id == aviso.campana_id))
+        if campana_existente.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña asociada no encontrada.")
+
+    db_aviso = models.Aviso(**aviso.model_dump())
+    db.add(db_aviso)
+    await db.commit()
+    await db.refresh(db_aviso)
+    return db_aviso
+
+@app.post("/avisos/", response_model=Aviso, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Aviso")
+async def crear_aviso(
+    aviso: AvisoBase,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Crea un nuevo aviso.
+
+    - **aviso**: Objeto AvisoBase con el título, contenido, fecha de vencimiento (opcional),
+                 ID del creador (analista) y ID de la campaña (opcional).
+    """
+    # Verificar si el creador_id (analista) existe
+    creador_existente = await db.execute(select(models.Analista).where(models.Analista.id == aviso.creador_id))
+    if creador_existente.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista creador no encontrado.")
+
+    # Verificar si la campana_id existe, si se proporciona
+    if aviso.campana_id:
+        campana_existente = await db.execute(select(models.Campana).where(models.Campana.id == aviso.campana_id))
+        if campana_existente.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña asociada no encontrada.")
+
+    db_aviso = models.Aviso(**aviso.model_dump())
+    db.add(db_aviso)
+    await db.commit()
+    await db.refresh(db_aviso)
+    return db_aviso
+
+@app.get("/avisos/", response_model=List[Aviso], summary="Obtener Avisos (con filtros opcionales)")
+async def obtener_avisos(
+    db: AsyncSession = Depends(get_db),
+    creador_id: Optional[int] = None,   # Filtro opcional por analista creador
+    campana_id: Optional[int] = None    # Filtro opcional por campaña asociada
+):
+    """
+    Obtiene todos los avisos, o filtra por ID del creador (analista) y/o ID de campaña.
+
+    - **creador_id**: ID del analista que creó el aviso para filtrar. (Opcional)
+    - **campana_id**: ID de la campaña asociada al aviso para filtrar. (Opcional)
+    """
+    query = select(models.Aviso)
+
+    if creador_id:
+        query = query.where(models.Aviso.creador_id == creador_id)
+    if campana_id:
+        query = query.where(models.Aviso.campana_id == campana_id)
+
+    avisos = await db.execute(query)
+    return avisos.scalars().all()
+
+@app.put("/avisos/{aviso_id}", response_model=Aviso, summary="Actualizar un Aviso existente")
+async def actualizar_aviso(
+    aviso_id: int,
+    aviso_update: AvisoBase, # Usamos AvisoBase para los datos de entrada
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Actualiza la información de un aviso existente.
+
+    - **aviso_id**: El ID del aviso a actualizar.
+    - **aviso_update**: Objeto AvisoBase con los datos actualizados.
+    """
+    db_aviso = await db.execute(select(models.Aviso).where(models.Aviso.id == aviso_id))
+    aviso_existente = db_aviso.scalar_one_or_none()
+
+    if aviso_existente is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
+
+    # Si se intenta cambiar el creador_id, verificamos que el nuevo creador exista
+    if aviso_update.creador_id != aviso_existente.creador_id:
+        nuevo_creador_existente = await db.execute(select(models.Analista).where(models.Analista.id == aviso_update.creador_id))
+        if nuevo_creador_existente.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nuevo Analista creador no encontrado para reasignar el Aviso.")
+        aviso_existente.creador_id = aviso_update.creador_id
+
+    # Si se intenta cambiar campana_id y se proporciona, verificamos que la nueva campaña exista
+    if aviso_update.campana_id != aviso_existente.campana_id:
+        if aviso_update.campana_id: # Si se está asignando a una campaña
+            nueva_campana_existente = await db.execute(select(models.Campana).where(models.Campana.id == aviso_update.campana_id))
+            if nueva_campana_existente.scalar_one_or_none() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Campaña no encontrada para reasignar el Aviso.")
+        aviso_existente.campana_id = aviso_update.campana_id # Se puede asignar a None también
+
+    aviso_existente.titulo = aviso_update.titulo
+    aviso_existente.contenido = aviso_update.contenido
+    aviso_existente.fecha_vencimiento = aviso_update.fecha_vencimiento
+
+    await db.commit()
+    await db.refresh(aviso_existente)
+    return aviso_existente
+
+@app.delete("/avisos/{aviso_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Aviso")
+async def eliminar_aviso(aviso_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Elimina un aviso existente.
+
+    - **aviso_id**: El ID del aviso a eliminar.
+    """
+    db_aviso = await db.execute(select(models.Aviso).where(models.Aviso.id == aviso_id))
+    aviso_a_eliminar = db_aviso.scalar_one_or_none()
+
+    if aviso_a_eliminar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
+
+    await db.delete(aviso_a_eliminar)
     await db.commit()
     return # Retorna 204 No Content
