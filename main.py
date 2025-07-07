@@ -434,3 +434,68 @@ async def eliminar_checklist_item(item_id: int, db: AsyncSession = Depends(get_d
     await db.delete(item_a_eliminar)
     await db.commit()
     return # Retorna 204 No Content
+
+@app.post("/comentarios_campana/", response_model=ComentarioCampana, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Comentario de Campaña")
+async def crear_comentario_campana(
+    comentario: ComentarioCampanaBase,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Crea un nuevo comentario asociado a una campaña y a un analista.
+
+    - **comentario**: Objeto ComentarioCampanaBase con el contenido, y los IDs del analista y la campaña.
+    """
+    # Verificar si el analista_id existe
+    analista_existente = await db.execute(select(models.Analista).where(models.Analista.id == comentario.analista_id))
+    if analista_existente.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+
+    # Verificar si la campana_id existe
+    campana_existente = await db.execute(select(models.Campana).where(models.Campana.id == comentario.campana_id))
+    if campana_existente.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
+
+    db_comentario = models.ComentarioCampana(**comentario.model_dump())
+    db.add(db_comentario)
+    await db.commit()
+    await db.refresh(db_comentario)
+    return db_comentario
+
+@app.get("/comentarios_campana/", response_model=List[ComentarioCampana], summary="Obtener Comentarios de Campaña (con filtros opcionales)")
+async def obtener_comentarios_campana(
+    db: AsyncSession = Depends(get_db),
+    campana_id: Optional[int] = None,   # Filtro opcional por campaña
+    analista_id: Optional[int] = None   # Filtro opcional por analista
+):
+    """
+    Obtiene todos los comentarios de campaña, o filtra por ID de campaña y/o ID de analista.
+
+    - **campana_id**: ID de la campaña para filtrar comentarios. (Opcional)
+    - **analista_id**: ID del analista para filtrar comentarios. (Opcional)
+    """
+    query = select(models.ComentarioCampana)
+
+    if campana_id:
+        query = query.where(models.ComentarioCampana.campana_id == campana_id)
+    if analista_id:
+        query = query.where(models.ComentarioCampana.analista_id == analista_id)
+
+    comentarios = await db.execute(query)
+    return comentarios.scalars().all()
+
+@app.delete("/comentarios_campana/{comentario_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Comentario de Campaña")
+async def eliminar_comentario_campana(comentario_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Elimina un comentario de campaña existente.
+
+    - **comentario_id**: El ID del comentario a eliminar.
+    """
+    db_comentario = await db.execute(select(models.ComentarioCampana).where(models.ComentarioCampana.id == comentario_id))
+    comentario_a_eliminar = db_comentario.scalar_one_or_none()
+
+    if comentario_a_eliminar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comentario de Campaña no encontrado.")
+
+    await db.delete(comentario_a_eliminar)
+    await db.commit()
+    return # Retorna 204 No Content
