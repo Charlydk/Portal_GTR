@@ -252,14 +252,27 @@ async def crear_tarea(tarea: TareaBase, db: AsyncSession = Depends(get_db)):
     return Tarea.model_validate(db_tarea)
 
 
-@app.get("/tareas/", response_model=List[Tarea])
-async def obtener_tareas(db: AsyncSession = Depends(get_db)):
+@app.get("/tareas/", response_model=List[Tarea], summary="Obtener Tareas (con filtros opcionales)")
+async def obtener_tareas(
+    db: AsyncSession = Depends(get_db),
+    analista_id: Optional[int] = None, # Parámetro opcional para filtrar por analista
+    campana_id: Optional[int] = None   # Parámetro opcional para filtrar por campaña
+):
     """
-    Obtiene la lista de todas las tareas desde la base de datos.
+    Obtiene todas las tareas, o filtra por analista y/o campaña.
+
+    - **analista_id**: ID del analista para filtrar tareas. (Opcional)
+    - **campana_id**: ID de la campaña para filtrar tareas. (Opcional)
     """
-    result = await db.execute(select(sql_models.Tarea))
-    tareas = result.scalars().all()
-    return [Tarea.model_validate(tar) for tar in tareas]
+    query = select(models.Tarea)
+
+    if analista_id:
+        query = query.where(models.Tarea.analista_id == analista_id)
+    if campana_id:
+        query = query.where(models.Tarea.campana_id == campana_id)
+
+    tareas = await db.execute(query)
+    return tareas.scalars().all()
 
 
 @app.get("/tareas/{tarea_id}", response_model=Tarea)
@@ -272,3 +285,61 @@ async def obtener_tarea_por_id(tarea_id: int, db: AsyncSession = Depends(get_db)
     if not tarea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada.")
     return Tarea.model_validate(tarea)
+
+
+@app.put("/tareas/{tarea_id}", response_model=Tarea, summary="Actualizar una Tarea existente")
+async def actualizar_tarea(
+    tarea_id: int,
+    tarea_update: TareaBase, # Usamos TareaBase para los datos de entrada
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Actualiza la información de una tarea existente.
+
+    - **tarea_id**: El ID de la tarea a actualizar.
+    - **tarea_update**: Objeto TareaBase con los datos actualizados.
+                      (Nota: analista_id y campana_id no se actualizan aquí directamente).
+    """
+    db_tarea = await db.execute(select(models.Tarea).where(models.Tarea.id == tarea_id))
+    tarea_existente = db_tarea.scalar_one_or_none()
+
+    if tarea_existente is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
+
+    # Actualizar los campos que pueden ser modificados
+    tarea_existente.titulo = tarea_update.titulo
+    tarea_existente.descripcion = tarea_update.descripcion
+    tarea_existente.fecha_vencimiento = tarea_update.fecha_vencimiento
+    tarea_existente.progreso = tarea_update.progreso # ¡Aquí se actualiza el progreso!
+
+    # No permitimos actualizar analista_id o campana_id directamente con este PUT,
+    # ya que eso podría tener implicaciones de negocio más complejas.
+    # Si fuera necesario, se crearía un endpoint específico o se manejaría con otra lógica.
+
+    await db.commit()
+    await db.refresh(tarea_existente)
+    return tarea_existente
+
+
+@app.delete("/tareas/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea")
+async def eliminar_tarea(tarea_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Elimina una tarea existente.
+
+    - **tarea_id**: El ID de la tarea a eliminar.
+    """
+    db_tarea = await db.execute(select(models.Tarea).where(models.Tarea.id == tarea_id))
+    tarea_a_eliminar = db_tarea.scalar_one_or_none()
+
+    if tarea_a_eliminar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
+
+    # Consideración: si hay ChecklistItems asociados a esta tarea,
+    # la base de datos podría impedir el borrado si no hay ON DELETE CASCADE.
+    # Si quieres que se borren automáticamente, asegúrate de que tu modelo SQLAlchemy
+    # y la tabla de la DB estén configuradas para ON DELETE CASCADE.
+
+    await db.delete(tarea_a_eliminar)
+    await db.commit()
+    # No devolvemos contenido para 204 No Content, pero FastAPI manejará esto correctamente.
+    return # No es necesario retornar un diccionario, el status_code 204 indica éxito sin contenido
