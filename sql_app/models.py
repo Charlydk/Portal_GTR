@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from datetime import datetime
 import enum
 
@@ -64,6 +65,8 @@ class Analista(Base):
     email = Column(String, unique=True, index=True)
     bms_id = Column(Integer, unique=True, index=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
+    acuses_recibo_avisos = relationship("AcuseReciboAviso", back_populates="analista")
+
 
     tareas_asignadas = relationship("Tarea", back_populates="analista_asignado")
     comentarios_hechos = relationship("ComentarioCampana", back_populates="analista")
@@ -136,9 +139,22 @@ class Aviso(Base):
     contenido = Column(Text, nullable=False)
     fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
     fecha_vencimiento = Column(DateTime, nullable=True)
+    acuses_recibo = relationship("AcuseReciboAviso", back_populates="aviso")
 
     creador_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=True)
 
     creador = relationship("Analista", back_populates="avisos_creados")
     campana_relacionada = relationship("Campana", back_populates="avisos")
+    
+class AcuseReciboAviso(Base):
+    __tablename__ = "acuse_recibo_avisos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    aviso_id = Column(Integer, ForeignKey("avisos.id"), nullable=False)
+    analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
+    fecha_acuse = Column(DateTime(timezone=True), server_default=func.now()) # Registra cuándo se hizo el acuse
+
+    # Relaciones para facilitar la carga de datos relacionados
+    aviso = relationship("Aviso", back_populates="acuses_recibo")
+    analista = relationship("Analista", back_populates="acuses_recibo_avisos")

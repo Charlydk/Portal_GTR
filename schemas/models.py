@@ -56,6 +56,10 @@ class AvisoBase(BaseModel):
     fecha_vencimiento: Optional[datetime] = None # Puede ser opcional y nulo
     creador_id: int # El ID del analista que crea el aviso
     campana_id: Optional[int] = None # El ID de la campaña a la que se asocia (opcional)
+    
+class AcuseReciboAvisoBase(BaseModel):
+    aviso_id: int
+    analista_id: int
 
 # --- Modelos Completos (para respuesta de la API, incluyendo IDs y valores por defecto) ---
 
@@ -105,3 +109,8 @@ class TareaConChecklist(Tarea):
     checklist_items: List["ChecklistItem"] = []
 
 # Nota: Asegúrate de importar estos modelos de relación en main.py si los vas a usar
+class AcuseReciboAviso(AcuseReciboAvisoBase):
+    id: int
+    fecha_acuse: datetime # Campo generado por la DB
+    class Config:
+        from_attributes = True
