@@ -42,18 +42,20 @@ class TareaBase(BaseModel):
 
 class ChecklistItemBase(BaseModel):
     descripcion: str = Field(..., min_length=3, max_length=200)
+    completado: bool = False  # Valor por defecto al crear
+    tarea_id: int             # Necesario para saber a qué tarea pertenece
 
 class ComentarioCampanaBase(BaseModel):
-    contenido: str = Field(..., min_length=10) # Cambiado a 'contenido' para consistencia
-    analista_id: int # Cambiado a 'analista_id'
-    campana_id: int  # Cambiado a 'campana_id'
+    contenido: str = Field(..., min_length=10)
+    analista_id: int
+    campana_id: int
 
 class AvisoBase(BaseModel):
-    titulo: str = Field(..., min_length=5, max_length=150)
+    titulo: str = Field(..., min_length=3, max_length=100)
     contenido: str = Field(..., min_length=10)
-    # fecha_publicacion no está aquí, se genera en la DB/respuesta
-    fecha_vencimiento: Optional[datetime] = None # Opcional y puede ser None
-    # creador_id y campana_id se agregarán en el modelo completo o en la lógica del endpoint
+    fecha_vencimiento: Optional[datetime] = None # Puede ser opcional y nulo
+    creador_id: int # El ID del analista que crea el aviso
+    campana_id: Optional[int] = None # El ID de la campaña a la que se asocia (opcional)
 
 # --- Modelos Completos (para respuesta de la API, incluyendo IDs y valores por defecto) ---
 
@@ -77,23 +79,19 @@ class Tarea(TareaBase):
 
 class ChecklistItem(ChecklistItemBase):
     id: int
-    completado: bool = False # Por defecto, no completado
-    tarea_id: int # Clave foránea, debe estar aquí para que Pydantic la maneje
-    fecha_creacion: datetime # Agregado para que coincida con lo que devuelve la DB
+    fecha_creacion: datetime # Campo generado por la DB
     class Config:
         from_attributes = True
 
 class ComentarioCampana(ComentarioCampanaBase):
     id: int
-    fecha_creacion: datetime # Se genera automáticamente
+    fecha_creacion: datetime # Campo generado por la DB
     class Config:
         from_attributes = True
 
 class Aviso(AvisoBase):
     id: int
-    fecha_creacion: datetime # Se genera automáticamente
-    creador_id: int # Agregado para mostrar quién lo creó
-    campana_id: Optional[int] = None # Agregado, puede ser None
+    fecha_creacion: datetime
     class Config:
         from_attributes = True
 

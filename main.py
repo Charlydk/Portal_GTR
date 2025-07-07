@@ -11,7 +11,7 @@ from schemas.models import (
     TareaBase, Tarea,
     # Asegúrate de incluir todos los modelos Pydantic que uses, como ProgresoTarea si lo usas directamente
     # ProgresoTarea,
-    # ChecklistItemBase, ChecklistItem,
+    ChecklistItemBase, ChecklistItem,
     # ComentarioCampanaBase, ComentarioCampana,
     # AvisoBase, Aviso
 )
@@ -343,3 +343,94 @@ async def eliminar_tarea(tarea_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
     # No devolvemos contenido para 204 No Content, pero FastAPI manejará esto correctamente.
     return # No es necesario retornar un diccionario, el status_code 204 indica éxito sin contenido
+
+# --- Endpoints para checklist tareas ---
+
+@app.post("/checklist_items/", response_model=ChecklistItem, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo ChecklistItem")
+async def crear_checklist_item(
+    item: ChecklistItemBase,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Crea un nuevo elemento de checklist asociado a una tarea.
+
+    - **item**: Objeto ChecklistItemBase con la descripción, estado de completado y el ID de la tarea a la que pertenece.
+    """
+    # Opcional: Verificar si la tarea_id existe
+    tarea_existente = await db.execute(select(models.Tarea).where(models.Tarea.id == item.tarea_id))
+    if tarea_existente.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada para asociar el ChecklistItem")
+
+    db_item = models.ChecklistItem(**item.model_dump())
+    db.add(db_item)
+    await db.commit()
+    await db.refresh(db_item)
+    return db_item
+
+
+@app.get("/checklist_items/", response_model=List[ChecklistItem], summary="Obtener ChecklistItems (con filtro opcional por tarea)")
+async def obtener_checklist_items(
+    db: AsyncSession = Depends(get_db),
+    tarea_id: Optional[int] = None # Filtro opcional por tarea
+):
+    """
+    Obtiene todos los elementos de checklist, o filtra por ID de tarea.
+
+    - **tarea_id**: ID de la tarea para filtrar los elementos de checklist. (Opcional)
+    """
+    query = select(models.ChecklistItem)
+    if tarea_id:
+        query = query.where(models.ChecklistItem.tarea_id == tarea_id)
+
+    items = await db.execute(query)
+    return items.scalars().all()
+
+@app.put("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Actualizar un ChecklistItem existente")
+async def actualizar_checklist_item(
+    item_id: int,
+    item_update: ChecklistItemBase, # Usamos ChecklistItemBase para los datos de entrada
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Actualiza la información de un elemento de checklist existente.
+
+    - **item_id**: El ID del elemento de checklist a actualizar.
+    - **item_update**: Objeto ChecklistItemBase con los datos actualizados (descripción, completado, tarea_id).
+    """
+    db_item = await db.execute(select(models.ChecklistItem).where(models.ChecklistItem.id == item_id))
+    item_existente = db_item.scalar_one_or_none()
+
+    if item_existente is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ChecklistItem no encontrado")
+
+    # Si se intenta cambiar la tarea_id, verificamos que la nueva tarea exista
+    if item_update.tarea_id != item_existente.tarea_id:
+        nueva_tarea_existente = await db.execute(select(models.Tarea).where(models.Tarea.id == item_update.tarea_id))
+        if nueva_tarea_existente.scalar_one_or_none() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Tarea no encontrada para reasignar el ChecklistItem")
+        item_existente.tarea_id = item_update.tarea_id
+
+
+    item_existente.descripcion = item_update.descripcion
+    item_existente.completado = item_update.completado
+
+    await db.commit()
+    await db.refresh(item_existente)
+    return item_existente
+
+@app.delete("/checklist_items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un ChecklistItem")
+async def eliminar_checklist_item(item_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Elimina un elemento de checklist existente.
+
+    - **item_id**: El ID del elemento de checklist a eliminar.
+    """
+    db_item = await db.execute(select(models.ChecklistItem).where(models.ChecklistItem.id == item_id))
+    item_a_eliminar = db_item.scalar_one_or_none()
+
+    if item_a_eliminar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ChecklistItem no encontrado")
+
+    await db.delete(item_a_eliminar)
+    await db.commit()
+    return # Retorna 204 No Content
