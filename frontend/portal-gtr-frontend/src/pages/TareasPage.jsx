@@ -1,11 +1,11 @@
-// src/pages/TareasPage.jsx
 import React from 'react';
+import ListaTareas from '../components/ListaTareas'; // <-- Importa el componente
 
 function TareasPage() {
   return (
     <div className="container mt-4">
-      <h2>Vista de Tareas</h2>
-      <p>Aquí se listarán y gestionarán las tareas.</p>
+      <h2>Gestión de Tareas</h2>
+      <ListaTareas /> {/* <-- Renderiza el componente ListaTareas */}
     </div>
   );
 }
