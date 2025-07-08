@@ -1,6 +1,7 @@
 // src/components/ListaTareas.jsx
 
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 
 function ListaTareas() {
   // Datos de prueba (simulando lo que vendría de tu API)
@@ -135,7 +136,9 @@ function ListaTareas() {
                 </td>
                 <td>{tarea.fecha_vencimiento}</td>
                 <td>
-                  <button className="btn btn-sm btn-info me-2">Ver</button>
+                  <Link to={`/tareas/${tarea.id}`} className="btn btn-sm btn-info me-2">
+                    Ver
+                  </Link>
                   <button className="btn btn-sm btn-warning">Editar</button>
                 </td>
               </tr>
