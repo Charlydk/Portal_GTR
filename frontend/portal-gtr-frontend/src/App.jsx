@@ -16,6 +16,7 @@ import AnalistasPage from './pages/AnalistasPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import FormularioTareaPage from './pages/FormularioTareaPage';
 
+
 function App() {
   return (
     <Router>
@@ -29,6 +30,7 @@ function App() {
           <Route path="/tareas/editar/:id" element={<FormularioTareaPage />} /> {/* Para editar */}
           <Route path="/tareas/:id" element={<DetalleTareaPage />} /> {/* Para ver detalle (general) */}
           <Route path="/tareas" element={<TareasPage />} /> {/* Esta es la lista general de tareas */}
+          
           {/* ------------------------------------- */}
 
           <Route path="/avisos" element={<AvisosPage />} />

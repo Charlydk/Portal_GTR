@@ -1,53 +1,40 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Date # Incluí Date por si la necesitas más adelante
+from sqlalchemy.orm import relationship # <-- Necesario para definir relaciones
 from sqlalchemy.sql import func
 from datetime import datetime
 import enum
 
 # Importa la Base declarativa que definimos en database.py
-from database import Base
+from database import Base # Usar .database para importación relativa dentro del paquete sql_app
 
-# Importa el tipo ENUM específico de PostgreSQL para poder usar el parámetro 'name'
+# Importa el tipo ENUM específico de PostgreSQL
 from sqlalchemy.dialects.postgresql import ENUM as PostgreSQLEnum
-# Importa TypeDecorator para manejar la conversión del Enum
-from sqlalchemy.types import TypeDecorator # No necesitamos SQLAlchemyString aquí si ya usamos PostgreSQLEnum directamente como impl
+from sqlalchemy.types import TypeDecorator # Para personalizar el manejo del Enum
 
 # --- Definición de TypeDecorator para el Enum de ProgresoTarea ---
+# Esto asegura que tu Enum de Python se mapee correctamente al tipo ENUM de PostgreSQL
 class ProgresoTareaType(TypeDecorator):
-    '''Convierte ProgresoTarea Enum de/a string para PostgreSQL'''
+    impl = PostgreSQLEnum # La implementación real será el ENUM de PostgreSQL
+    cache_ok = True # Optimizaciones de caché
 
-    # La implementación real será el ENUM de PostgreSQL
-    # NOTA: En SQLAlchemy 2.0+, la forma recomendada es definir 'impl'
-    # como una CLASE (PostgreSQLEnum), no una instancia.
-    # Los parámetros para PostgreSQLEnum se pasan en el constructor de este TypeDecorator.
-    impl = PostgreSQLEnum # ¡CAMBIO AQUÍ! Ahora es PostgreSQLEnum como clase
-
-    cache_ok = True
-
-    def __init__(self, enum_class, name, create_type=True, **kw): # Añadimos name y create_type
+    def __init__(self, enum_class, name, create_type=True, **kw):
         self.enum_class = enum_class
-        # Inicializamos la implementación base (PostgreSQLEnum) con los valores del enum y el nombre.
-        # Aquí es donde pasamos los argumentos 'name' y 'create_type' a PostgreSQLEnum.
-        # Los argumentos 'enum_class', 'name', 'create_type' se pasan directamente a la 'impl' (PostgreSQLEnum)
-        # en el contexto de TypeDecorator, así que no se pasan en super().__init__.
-        # Si usaras un tipo genérico como String, super().__init__(**kw) sería suficiente.
-        # Para ENUMs específicos de dialectos, la clase de la implementación es importante.
-        super().__init__(enum_class, name=name, create_type=create_type, **kw) # ¡CAMBIO CRUCIAL AQUÍ!
+        # Asegúrate de que los valores del enum sean cadenas
+        enum_values = [e.value for e in enum_class]
+        super().__init__(*enum_values, name=name, create_type=create_type, **kw)
 
     def process_bind_param(self, value, dialect):
-        # Cuando Python envía el valor a la base de datos
         if value is None:
             return value
-        return value.value # Retorna el valor de la cadena (ej. "Pendiente")
+        return value.value # Retorna el valor de la cadena (ej. "PENDIENTE")
 
     def process_result_value(self, value, dialect):
-        # Cuando la base de datos devuelve un valor a Python
         if value is None:
             return value
         # Convierte la cadena de la DB al miembro del Enum de Python
         return self.enum_class(value)
 
-# Definición del Enum para ProgresoTarea (DEBE coincidir con el de Pydantic)
+# Definición del Enum para ProgresoTarea (DEBE coincidir con el de Pydantic y TypeDecorator)
 class ProgresoTarea(enum.Enum):
     PENDIENTE = "PENDIENTE"
     EN_PROGRESO = "EN_PROGRESO"
@@ -60,17 +47,18 @@ class Analista(Base):
     __tablename__ = "analistas"
 
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String, index=True)
-    apellido = Column(String, index=True)
-    email = Column(String, unique=True, index=True)
-    bms_id = Column(Integer, unique=True, index=True)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
-    acuses_recibo_avisos = relationship("AcuseReciboAviso", back_populates="analista")
+    nombre = Column(String, index=True, nullable=False) # Añadido nullable=False
+    apellido = Column(String, index=True, nullable=False) # Añadido nullable=False
+    email = Column(String, unique=True, index=True, nullable=False) # Añadido nullable=False
+    bms_id = Column(Integer, unique=True, index=True, nullable=False) # Añadido nullable=False
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now(), nullable=False) # Usar func.now() para la DB
 
+    # Relaciones inversas (back_populates debe apuntar al nombre del atributo de relación en el otro modelo)
+    tareas = relationship("Tarea", back_populates="analista", cascade="all, delete-orphan") # Añadido cascade
+    comentarios = relationship("ComentarioCampana", back_populates="analista", cascade="all, delete-orphan")
+    avisos_creados = relationship("Aviso", back_populates="creador", cascade="all, delete-orphan")
+    acuses_recibo = relationship("AcuseReciboAviso", back_populates="analista", cascade="all, delete-orphan") # Nombre corregido
 
-    tareas_asignadas = relationship("Tarea", back_populates="analista_asignado")
-    comentarios_hechos = relationship("ComentarioCampana", back_populates="analista")
-    avisos_creados = relationship("Aviso", back_populates="creador")
 
 class Campana(Base):
     __tablename__ = "campanas"
@@ -78,13 +66,15 @@ class Campana(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, index=True, nullable=False)
     descripcion = Column(Text, nullable=True)
-    fecha_inicio = Column(DateTime, nullable=False)
-    fecha_fin = Column(DateTime, nullable=True)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
+    fecha_inicio = Column(DateTime(timezone=True), nullable=False) # Usar DateTime para consistencia con Pydantic
+    fecha_fin = Column(DateTime(timezone=True), nullable=True)     # Usar DateTime para consistencia con Pydantic
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    tareas = relationship("Tarea", back_populates="campana_relacionada")
-    comentarios = relationship("ComentarioCampana", back_populates="campana_relacionada")
-    avisos = relationship("Aviso", back_populates="campana_relacionada")
+    # Relaciones inversas
+    tareas = relationship("Tarea", back_populates="campana", cascade="all, delete-orphan") # Añadido cascade
+    comentarios = relationship("ComentarioCampana", back_populates="campana", cascade="all, delete-orphan")
+    avisos = relationship("Aviso", back_populates="campana", cascade="all, delete-orphan")
+
 
 class Tarea(Base):
     __tablename__ = "tareas"
@@ -92,19 +82,22 @@ class Tarea(Base):
     id = Column(Integer, primary_key=True, index=True)
     titulo = Column(String, index=True, nullable=False)
     descripcion = Column(Text, nullable=True)
-    fecha_vencimiento = Column(DateTime, nullable=True)
-    # ¡Ahora ProgresoTareaType maneja el 'name' y 'create_type' internamente para PostgreSQLEnum!
-    progreso = Column(ProgresoTareaType(ProgresoTarea, name='progresotareaenum', create_type=True),
+    fecha_vencimiento = Column(DateTime(timezone=True), nullable=True) # Usar DateTime
+    
+    # Uso del TypeDecorator para el Enum
+    progreso = Column(ProgresoTareaType(ProgresoTarea, name='progresotareaenum'),
                       default=ProgresoTarea.PENDIENTE, nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
 
-    analista_asignado = relationship("Analista", back_populates="tareas_asignadas")
-    campana_relacionada = relationship("Campana", back_populates="tareas")
+    # Relaciones directas (nombre del atributo en este modelo)
+    analista = relationship("Analista", back_populates="tareas") # back_populates apunta al atributo 'tareas' en Analista
+    campana = relationship("Campana", back_populates="tareas")   # back_populates apunta al atributo 'tareas' en Campana
 
-    checklist_items = relationship("ChecklistItem", back_populates="tarea_parent")
+    checklist_items = relationship("ChecklistItem", back_populates="tarea", cascade="all, delete-orphan")
+
 
 class ChecklistItem(Base):
     __tablename__ = "checklist_items"
@@ -112,24 +105,26 @@ class ChecklistItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     descripcion = Column(String, nullable=False)
     completado = Column(Boolean, default=False, nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     tarea_id = Column(Integer, ForeignKey("tareas.id"), nullable=False)
 
-    tarea_parent = relationship("Tarea", back_populates="checklist_items")
+    tarea = relationship("Tarea", back_populates="checklist_items") # back_populates apunta al atributo 'checklist_items' en Tarea
+
 
 class ComentarioCampana(Base):
     __tablename__ = "comentarios_campana"
 
     id = Column(Integer, primary_key=True, index=True)
     contenido = Column(Text, nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
 
-    analista = relationship("Analista", back_populates="comentarios_hechos")
-    campana_relacionada = relationship("Campana", back_populates="comentarios")
+    analista = relationship("Analista", back_populates="comentarios") # back_populates apunta al atributo 'comentarios' en Analista
+    campana = relationship("Campana", back_populates="comentarios")   # back_populates apunta al atributo 'comentarios' en Campana
+
 
 class Aviso(Base):
     __tablename__ = "avisos"
@@ -137,24 +132,25 @@ class Aviso(Base):
     id = Column(Integer, primary_key=True, index=True)
     titulo = Column(String, index=True, nullable=False)
     contenido = Column(Text, nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, nullable=False)
-    fecha_vencimiento = Column(DateTime, nullable=True)
-    acuses_recibo = relationship("AcuseReciboAviso", back_populates="aviso")
-
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    fecha_vencimiento = Column(DateTime(timezone=True), nullable=True) # Usar DateTime
+    
     creador_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=True)
 
-    creador = relationship("Analista", back_populates="avisos_creados")
-    campana_relacionada = relationship("Campana", back_populates="avisos")
-    
+    creador = relationship("Analista", back_populates="avisos_creados") # back_populates apunta a 'avisos_creados' en Analista
+    campana = relationship("Campana", back_populates="avisos") # back_populates apunta a 'avisos' en Campana
+
+    acuses_recibo = relationship("AcuseReciboAviso", back_populates="aviso", cascade="all, delete-orphan")
+
+
 class AcuseReciboAviso(Base):
-    __tablename__ = "acuse_recibo_avisos"
+    __tablename__ = "acuses_recibo_avisos" # Nombre de tabla corregido para ser consistente
 
     id = Column(Integer, primary_key=True, index=True)
     aviso_id = Column(Integer, ForeignKey("avisos.id"), nullable=False)
     analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
-    fecha_acuse = Column(DateTime(timezone=True), server_default=func.now()) # Registra cuándo se hizo el acuse
+    fecha_acuse = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    # Relaciones para facilitar la carga de datos relacionados
-    aviso = relationship("Aviso", back_populates="acuses_recibo")
-    analista = relationship("Analista", back_populates="acuses_recibo_avisos")
+    aviso = relationship("Aviso", back_populates="acuses_recibo") # back_populates apunta a 'acuses_recibo' en Aviso
+    analista = relationship("Analista", back_populates="acuses_recibo") # back_populates apunta a 'acuses_recibo' en Analista (corregido)
