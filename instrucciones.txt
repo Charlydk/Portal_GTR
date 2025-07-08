@@ -3,3 +3,12 @@ uvicorn main:app --reload --port 8001
 
 para mostrar en la web:
 http://127.0.0.1:8001
+
+
+----------------------------
+
+iniciar frontend local (react portable)
+
+$env:PATH = "C:\Users\bernardino.20\Documents\node-v22.16.0-win-x64;" + $env:PATH
+
+& "C:\Users\bernardino.20\Documents\node-v22.16.0-win-x64\npm.cmd" run dev
