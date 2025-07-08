@@ -139,7 +139,11 @@ function ListaTareas() {
                   <Link to={`/tareas/${tarea.id}`} className="btn btn-sm btn-info me-2">
                     Ver
                   </Link>
-                  <button className="btn btn-sm btn-warning">Editar</button>
+                                    
+                  <Link to={`/tareas/editar/${tarea.id}`} className="btn btn-sm btn-warning">
+                    Editar
+                  </Link>
+                  
                 </td>
               </tr>
             ))}
