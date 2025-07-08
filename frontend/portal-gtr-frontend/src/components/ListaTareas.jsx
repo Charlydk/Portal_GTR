@@ -1,19 +1,16 @@
 // src/components/ListaTareas.jsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // Agregamos useCallback
 import { Link } from 'react-router-dom';
+import { API_BASE_URL } from '../api'; // <-- Importamos la URL base
 
 function ListaTareas() {
-  // Datos de prueba (simulando lo que vendría de tu API)
-  const [allTareas, setAllTareas] = useState([
-    { id: 1, titulo: 'Revisar informe Q3', descripcion: 'Análisis de ventas del tercer trimestre.', progreso: 'EN_PROGRESO', fecha_vencimiento: '2025-07-15', analista_id: 1, analista_nombre: 'Juan Pérez', campana_id: 1, campana_nombre: 'Campaña General' },
-    { id: 2, titulo: 'Actualizar base de datos de clientes', descripcion: 'Importar nuevos leads de la feria ExpoTech.', progreso: 'PENDIENTE', fecha_vencimiento: '2025-07-20', analista_id: 2, analista_nombre: 'María González', campana_id: 2, campana_nombre: 'Campaña Leads' },
-    { id: 3, titulo: 'Planificar lanzamiento Campaña Verano', descripcion: 'Definir estrategia de marketing para la nueva temporada.', progreso: 'COMPLETADA', fecha_vencimiento: '2025-06-30', analista_id: 1, analista_nombre: 'Juan Pérez', campana_id: 3, campana_nombre: 'Campaña Verano' },
-    { id: 4, titulo: 'Diseñar gráfica para aviso 001', descripcion: 'Diseño de banner para redes sociales.', progreso: 'BLOQUEADA', fecha_vencimiento: '2025-07-10', analista_id: 3, analista_nombre: 'Laura Martínez', campana_id: 4, campana_nombre: 'Campaña Redes' },
-    { id: 5, titulo: 'Investigación de mercado Asia', descripcion: 'Análisis de competencia en el mercado asiático.', progreso: 'EN_PROGRESO', fecha_vencimiento: '2025-08-01', analista_id: 2, analista_nombre: 'María González', campana_id: 1, campana_nombre: 'Campaña General' },
-  ]);
+  // allTareas ahora será para almacenar las tareas cargadas de la API
+  const [allTareas, setAllTareas] = useState([]);
+  const [loading, setLoading] = useState(true); // Estado para indicar si estamos cargando
+  const [error, setError] = useState(null);     // Estado para manejar errores de la API
 
-  // Datos de prueba para los selects de filtros (simulando lo que vendría de tu API)
+  // Datos de prueba para los selects de filtros (por ahora, los mantenemos aquí. Más adelante, también vendrían de la API)
   const [analistas, setAnalistas] = useState([
     { id: 1, nombre: 'Juan Pérez' },
     { id: 2, nombre: 'María González' },
@@ -31,18 +28,88 @@ function ListaTareas() {
     'PENDIENTE', 'EN_PROGRESO', 'COMPLETADA', 'BLOQUEADA'
   ]);
 
-  // Estados para guardar los valores seleccionados de los filtros
-  const [filtroAnalista, setFiltroAnalista] = useState(''); // ID del analista, '' para "Todos"
-  const [filtroCampana, setFiltroCampana] = useState('');   // ID de la campaña, '' para "Todas"
-  const [filtroProgreso, setFiltroProgreso] = useState(''); // Estado de progreso, '' para "Todos"
+  const [filtroAnalista, setFiltroAnalista] = useState('');
+  const [filtroCampana, setFiltroCampana] = useState('');
+  const [filtroProgreso, setFiltroProgreso] = useState('');
 
-  // Lógica de filtrado
+  // Función para cargar las tareas de la API
+  // Usamos useCallback para que esta función no se recree innecesariamente
+  const fetchTareas = useCallback(async () => {
+    setLoading(true); // Ponemos loading a true antes de la petición
+    setError(null);   // Limpiamos cualquier error previo
+    try {
+      const response = await fetch(`${API_BASE_URL}/tareas/`); // Asumiendo que tu API tiene este endpoint
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      setAllTareas(data); // Actualizamos el estado con las tareas de la API
+    } catch (err) {
+      console.error("Error al cargar las tareas:", err);
+      setError("No se pudieron cargar las tareas. Intente de nuevo más tarde.");
+    } finally {
+      setLoading(false); // Siempre ponemos loading a false al finalizar
+    }
+  }, []); // Dependencias vacías, solo se crea una vez
+
+  // useEffect para llamar a fetchTareas cuando el componente se monta
+  useEffect(() => {
+    fetchTareas();
+  }, [fetchTareas]); // Ejecuta cuando `fetchTareas` cambie (que no cambiará por `useCallback`)
+
+
+  // Lógica de filtrado (se mantiene igual, pero ahora sobre `allTareas` de la API)
   const tareasFiltradas = allTareas.filter(tarea => {
     const coincideAnalista = filtroAnalista ? tarea.analista_id === parseInt(filtroAnalista) : true;
     const coincideCampana = filtroCampana ? tarea.campana_id === parseInt(filtroCampana) : true;
     const coincideProgreso = filtroProgreso ? tarea.progreso === filtroProgreso : true;
     return coincideAnalista && coincideCampana && coincideProgreso;
   });
+
+  // Manejo de la eliminación de una tarea (nueva funcionalidad)
+  const handleDeleteTarea = async (id) => {
+    if (!window.confirm('¿Estás seguro de que quieres eliminar esta tarea?')) {
+      return; // Si el usuario cancela, no hacemos nada
+    }
+    try {
+      const response = await fetch(`${API_BASE_URL}/tareas/${id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      // Si la eliminación fue exitosa, volvemos a cargar las tareas
+      // O actualizamos el estado para remover la tarea eliminada
+      setAllTareas(prevTareas => prevTareas.filter(tarea => tarea.id !== id));
+      alert('Tarea eliminada con éxito.');
+    } catch (err) {
+      console.error("Error al eliminar la tarea:", err);
+      setError("No se pudo eliminar la tarea. Intente de nuevo.");
+    }
+  };
+
+
+  if (loading) {
+    return (
+      <div className="container mt-4 text-center">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Cargando tareas...</span>
+        </div>
+        <p>Cargando tareas...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="container mt-4">
+        <div className="alert alert-danger" role="alert">
+          {error}
+        </div>
+        <button className="btn btn-primary mt-3" onClick={fetchTareas}>Reintentar</button>
+      </div>
+    );
+  }
 
   return (
     <div className="container mt-4">
@@ -117,7 +184,6 @@ function ListaTareas() {
             </tr>
           </thead>
           <tbody>
-            {/* Ahora mapeamos sobre tareasFiltradas */}
             {tareasFiltradas.map(tarea => (
               <tr key={tarea.id}>
                 <td>{tarea.id}</td>
@@ -139,11 +205,16 @@ function ListaTareas() {
                   <Link to={`/tareas/${tarea.id}`} className="btn btn-sm btn-info me-2">
                     Ver
                   </Link>
-                                    
-                  <Link to={`/tareas/editar/${tarea.id}`} className="btn btn-sm btn-warning">
+                  <Link to={`/tareas/editar/${tarea.id}`} className="btn btn-sm btn-warning me-2">
                     Editar
                   </Link>
-                  
+                  {/* Botón de eliminar */}
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={() => handleDeleteTarea(tarea.id)}
+                  >
+                    Eliminar
+                  </button>
                 </td>
               </tr>
             ))}

@@ -1,6 +1,7 @@
 # main.py
 
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import Optional, List
@@ -24,11 +25,25 @@ from schemas.models import (
 # Importamos la función para obtener la sesión de la DB y el engine
 from database import get_db, engine
 
-
 app = FastAPI(
     title="Portal GTR API",
     description="API para la gestión de analistas, campañas, tareas, avisos y acuses de recibo."
 )
+
+origins = [
+    "http://localhost:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+
 
 @app.on_event("startup")
 async def startup_event():
