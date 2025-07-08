@@ -1,6 +1,7 @@
 // src/components/DetalleTarea.jsx
 
 import React from 'react';
+import { Link } from 'react-router-dom';
 
 function DetalleTarea({ tarea }) { // Este componente recibirá una 'tarea' como prop
   if (!tarea) {
@@ -55,8 +56,11 @@ function DetalleTarea({ tarea }) { // Este componente recibirá una 'tarea' como
           )}
         </div>
         <div className="card-footer text-end">
-          <button className="btn btn-secondary me-2">Volver</button>
-          <button className="btn btn-warning">Editar Tarea</button>
+          <Link to="/tareas" className="btn btn-secondary me-2">Volver a Tareas</Link>
+          <Link to={`/tareas/editar/${tarea.id}`} className="btn btn-warning">
+            Editar Tarea
+          </Link>
+          {/* -------------------------------------------------- */}
         </div>
       </div>
     </div>
