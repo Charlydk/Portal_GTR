@@ -1,7 +1,7 @@
 # main.py
 
 from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware # para CORS
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import Optional, List
@@ -30,6 +30,7 @@ app = FastAPI(
     description="API para la gestión de analistas, campañas, tareas, avisos y acuses de recibo."
 )
 
+#----para CORS----#
 origins = [
     "http://localhost:5173",
 ]

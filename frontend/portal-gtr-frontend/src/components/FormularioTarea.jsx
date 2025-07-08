@@ -1,56 +1,55 @@
 // src/components/FormularioTarea.jsx
 
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom'; // Para redirigir después de guardar
+import { useNavigate } from 'react-router-dom';
 
-function FormularioTarea({ tareaInicial = null }) {
+// Recibimos las nuevas props: analistas, campanas y onSave
+function FormularioTarea({ tareaInicial, onSave, analistas, campanas }) {
   const navigate = useNavigate();
 
-  // Estados para los datos del formulario
+  // Estado local para los campos del formulario
   const [formData, setFormData] = useState({
     titulo: '',
     descripcion: '',
-    analista_id: '',
-    campana_id: '',
     progreso: 'PENDIENTE', // Valor por defecto
     fecha_vencimiento: '',
-    checklist_items: [], // Array para los items del checklist
+    analista_id: '',
+    campana_id: '',
+    // checklist_items: [], // Por ahora no manejamos checklist_items directamente en este formulario de alto nivel
   });
 
-  // Estados para los datos de prueba de los selects (Analistas, Campañas)
-  const [analistas, setAnalistas] = useState([
-    { id: 1, nombre: 'Juan Pérez' },
-    { id: 2, nombre: 'María González' },
-    { id: 3, nombre: 'Laura Martínez' },
-  ]);
-
-  const [campanas, setCampanas] = useState([
-    { id: 1, nombre: 'Campaña General' },
-    { id: 2, nombre: 'Campaña Leads' },
-    { id: 3, nombre: 'Campaña Verano' },
-    { id: 4, nombre: 'Campaña Redes' },
-  ]);
-
-  const [progresoOpciones] = useState([
-    'PENDIENTE', 'EN_PROGRESO', 'COMPLETADA', 'BLOQUEADA'
-  ]);
-
-  // Efecto para cargar los datos de la tarea si estamos editando
+  // Efecto para inicializar el formulario cuando tareaInicial cambie (para edición)
   useEffect(() => {
     if (tareaInicial) {
+      // --- MODIFICACIÓN AQUÍ para formatear la fecha ---
+      const formattedDate = tareaInicial.fecha_vencimiento
+        ? tareaInicial.fecha_vencimiento.split('T')[0] // Toma solo la parte YYYY-MM-DD
+        : '';
+      // ---------------------------------------------------
+
       setFormData({
         titulo: tareaInicial.titulo || '',
         descripcion: tareaInicial.descripcion || '',
-        analista_id: tareaInicial.analista_id ? String(tareaInicial.analista_id) : '', // Convertir a string para select
-        campana_id: tareaInicial.campana_id ? String(tareaInicial.campana_id) : '', // Convertir a string para select
         progreso: tareaInicial.progreso || 'PENDIENTE',
-        fecha_vencimiento: tareaInicial.fecha_vencimiento || '',
-        checklist_items: tareaInicial.checklist_items || [],
+        fecha_vencimiento: formattedDate, // Usa la fecha formateada para el input type="date"
+        analista_id: tareaInicial.analista_id || '',
+        campana_id: tareaInicial.campana_id || '',
+        // checklist_items: tareaInicial.checklist_items || [],
+      });
+    } else {
+      // Si no hay tareaInicial, reseteamos el formulario (para creación)
+      setFormData({
+        titulo: '',
+        descripcion: '',
+        progreso: 'PENDIENTE',
+        fecha_vencimiento: '',
+        analista_id: '',
+        campana_id: '',
       });
     }
   }, [tareaInicial]);
 
-  // Manejador de cambios para los campos de texto y selects
+  // Manejador genérico para cambios en los inputs
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prevData => ({
@@ -59,71 +58,62 @@ function FormularioTarea({ tareaInicial = null }) {
     }));
   };
 
-  // Manejadores para los checklist items
-  const handleChecklistItemChange = (index, e) => {
-    const newChecklistItems = [...formData.checklist_items];
-    newChecklistItems[index] = { ...newChecklistItems[index], descripcion: e.target.value };
-    setFormData(prevData => ({
-      ...prevData,
-      checklist_items: newChecklistItems
-    }));
-  };
-
-  const handleAddChecklistItem = () => {
-    setFormData(prevData => ({
-      ...prevData,
-      checklist_items: [...prevData.checklist_items, { id: Date.now(), descripcion: '', completado: false }]
-    }));
-  };
-
-  const handleRemoveChecklistItem = (idToRemove) => {
-    setFormData(prevData => ({
-      ...prevData,
-      checklist_items: prevData.checklist_items.filter(item => item.id !== idToRemove)
-    }));
-  };
-
+  // Manejador para el envío del formulario
   const handleSubmit = (e) => {
-    e.preventDefault();
-    console.log('Datos a enviar:', formData);
-    // Aquí iría la lógica para enviar los datos a tu API (POST para crear, PUT para editar)
+    e.preventDefault(); // Previene el comportamiento por defecto del formulario (recargar la página)
 
-    // Simulación de guardado y redirección
-    alert(`Tarea ${tareaInicial ? 'actualizada' : 'creada'} con éxito (simulado)!`);
-    navigate('/tareas'); // Redirige de vuelta a la lista de tareas
+    // Validaciones básicas (puedes añadir más)
+    if (!formData.titulo || !formData.descripcion || !formData.analista_id || !formData.campana_id) {
+      alert('Por favor, completa todos los campos obligatorios (Título, Descripción, Analista, Campaña).');
+      return;
+    }
+
+    // Llamamos a la función onSave que viene de FormularioTareaPage
+    onSave({
+      ...formData,
+      // Convertimos IDs a números si no vienen así del select
+      analista_id: parseInt(formData.analista_id),
+      campana_id: parseInt(formData.campana_id)
+    });
   };
+
+  // Opciones de progreso
+  const progresoOpciones = ['PENDIENTE', 'EN_PROGRESO', 'COMPLETADA', 'BLOQUEADA'];
 
   return (
     <div className="container mt-4">
-      <h3>{tareaInicial ? 'Editar Tarea' : 'Crear Nueva Tarea'}</h3>
-      <div className="card p-4">
-        <form onSubmit={handleSubmit}>
-          <div className="mb-3">
-            <label htmlFor="titulo" className="form-label">Título:</label>
-            <input
-              type="text"
-              className="form-control"
-              id="titulo"
-              name="titulo"
-              value={formData.titulo}
-              onChange={handleChange}
-              required
-            />
-          </div>
-          <div className="mb-3">
-            <label htmlFor="descripcion" className="form-label">Descripción:</label>
-            <textarea
-              className="form-control"
-              id="descripcion"
-              name="descripcion"
-              rows="3"
-              value={formData.descripcion}
-              onChange={handleChange}
-            ></textarea>
-          </div>
+      <div className="card">
+        <div className="card-header bg-success text-white">
+          <h4 className="mb-0">{tareaInicial ? 'Editar Tarea' : 'Crear Nueva Tarea'}</h4>
+        </div>
+        <div className="card-body">
+          <form onSubmit={handleSubmit}>
+            <div className="mb-3">
+              <label htmlFor="titulo" className="form-label">Título:</label>
+              <input
+                type="text"
+                className="form-control"
+                id="titulo"
+                name="titulo"
+                value={formData.titulo}
+                onChange={handleChange}
+                required
+              />
+            </div>
+            <div className="mb-3">
+              <label htmlFor="descripcion" className="form-label">Descripción:</label>
+              <textarea
+                className="form-control"
+                id="descripcion"
+                name="descripcion"
+                rows="3"
+                value={formData.descripcion}
+                onChange={handleChange}
+                required
+              ></textarea>
+            </div>
 
-          <div className="row mb-3">
-            <div className="col-md-6">
+            <div className="mb-3">
               <label htmlFor="analista_id" className="form-label">Analista Asignado:</label>
               <select
                 className="form-select"
@@ -141,7 +131,8 @@ function FormularioTarea({ tareaInicial = null }) {
                 ))}
               </select>
             </div>
-            <div className="col-md-6">
+
+            <div className="mb-3">
               <label htmlFor="campana_id" className="form-label">Campaña:</label>
               <select
                 className="form-select"
@@ -159,10 +150,8 @@ function FormularioTarea({ tareaInicial = null }) {
                 ))}
               </select>
             </div>
-          </div>
 
-          <div className="row mb-3">
-            <div className="col-md-6">
+            <div className="mb-3">
               <label htmlFor="progreso" className="form-label">Progreso:</label>
               <select
                 className="form-select"
@@ -178,7 +167,8 @@ function FormularioTarea({ tareaInicial = null }) {
                 ))}
               </select>
             </div>
-            <div className="col-md-6">
+
+            <div className="mb-3">
               <label htmlFor="fecha_vencimiento" className="form-label">Fecha de Vencimiento:</label>
               <input
                 type="date"
@@ -189,47 +179,21 @@ function FormularioTarea({ tareaInicial = null }) {
                 onChange={handleChange}
               />
             </div>
-          </div>
 
-          <hr />
-
-          <h5>Checklist Items:</h5>
-          {formData.checklist_items.map((item, index) => (
-            <div key={item.id} className="input-group mb-2">
-              <input
-                type="text"
-                className="form-control"
-                placeholder="Descripción del item"
-                value={item.descripcion}
-                onChange={(e) => handleChecklistItemChange(index, e)}
-                required
-              />
+            <div className="d-flex justify-content-end">
               <button
-                className="btn btn-outline-danger"
                 type="button"
-                onClick={() => handleRemoveChecklistItem(item.id)}
+                className="btn btn-secondary me-2"
+                onClick={() => navigate('/tareas')} // Botón Volver a la lista
               >
-                Eliminar
+                Volver
+              </button>
+              <button type="submit" className="btn btn-primary">
+                {tareaInicial ? 'Actualizar Tarea' : 'Crear Tarea'}
               </button>
             </div>
-          ))}
-          <button
-            type="button"
-            className="btn btn-outline-primary mb-3"
-            onClick={handleAddChecklistItem}
-          >
-            Agregar Item de Checklist
-          </button>
-
-          <div className="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
-            <button type="button" className="btn btn-secondary me-md-2" onClick={() => navigate('/tareas')}>
-              Cancelar
-            </button>
-            <button type="submit" className="btn btn-primary">
-              {tareaInicial ? 'Guardar Cambios' : 'Crear Tarea'}
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
     </div>
   );
