@@ -9,20 +9,25 @@ import './App.css';
 
 import Navbar from './components/Navbar';
 import HomePage from './pages/HomePage';
-import TareasPage from './pages/TareasPage';
 import AvisosPage from './pages/AvisosPage';
+
+// Importaciones de Analistas
 import AnalistasPage from './pages/AnalistasPage';
+import DetalleAnalistaPage from './pages/DetalleAnalistaPage';
+import FormularioAnalistaPage from './pages/FormularioAnalistaPage';
+
+// Importaciones de Campañas
+import CampanasPage from './pages/CampanasPage';
+import DetalleCampanaPage from './pages/DetalleCampanaPage';
+import FormularioCampanaPage from './pages/FormularioCampanaPage';
+
+// Importaciones de Tareas
+import TareasPage from './pages/TareasPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import FormularioTareaPage from './pages/FormularioTareaPage';
 
-// Importaciones para Campañas
-import CampanasPage from './pages/CampanasPage'; // La página que lista campañas
-import DetalleCampanaPage from './pages/DetalleCampanaPage'; // Para ver el detalle de una campaña
-import FormularioCampanaPage from './pages/FormularioCampanaPage'; // Para crear y editar campañas
-
-// Importaciones para Analistas (ya existentes)
-import DetalleAnalistaPage from './pages/DetalleAnalistaPage';
-import FormularioAnalistaPage from './pages/FormularioAnalistaPage';
+// Importaciones de Checklist Items (¡NUEVAS!)
+import FormularioChecklistItemPage from './pages/FormularioChecklistItemPage';
 
 
 function App() {
@@ -33,12 +38,11 @@ function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           
-          {/* Rutas de Campañas - ¡El orden es crítico! */}
-          {/* Las rutas más específicas (con "crear" o "editar") deben ir ANTES que las rutas genéricas con ":id" */}
-          <Route path="/campanas/crear" element={<FormularioCampanaPage />} /> {/* Para crear una nueva campaña */}
-          <Route path="/campanas/editar/:id" element={<FormularioCampanaPage />} /> {/* Para editar una campaña existente */}
-          <Route path="/campanas/:id" element={<DetalleCampanaPage />} /> {/* Para ver el detalle de una campaña */}
-          <Route path="/campanas" element={<CampanasPage />} /> {/* Lista general de campañas */}
+          {/* Rutas de Campañas */}
+          <Route path="/campanas/crear" element={<FormularioCampanaPage />} />
+          <Route path="/campanas/editar/:id" element={<FormularioCampanaPage />} />
+          <Route path="/campanas/:id" element={<DetalleCampanaPage />} />
+          <Route path="/campanas" element={<CampanasPage />} />
 
           {/* Rutas de Tareas */}
           <Route path="/tareas/nueva" element={<FormularioTareaPage />} />
@@ -46,6 +50,12 @@ function App() {
           <Route path="/tareas/:id" element={<DetalleTareaPage />} />
           <Route path="/tareas" element={<TareasPage />} />
           
+          {/* Rutas de Checklist Items (¡ANIDADAS BAJO TAREAS!) */}
+          {/* La ruta de creación necesita el ID de la tarea para saber a qué tarea pertenece el ítem */}
+          <Route path="/tareas/:tareaId/checklist-items/crear" element={<FormularioChecklistItemPage />} />
+          {/* La ruta de edición necesita el ID del ítem y el ID de la tarea para el "Cancelar" */}
+          <Route path="/tareas/:tareaId/checklist-items/editar/:id" element={<FormularioChecklistItemPage />} />
+
           {/* Rutas de Avisos */}
           <Route path="/avisos" element={<AvisosPage />} />
           
