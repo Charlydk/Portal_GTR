@@ -3,13 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware # para CORS
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload # Importa selectinload
+from sqlalchemy import func # Importa func para default=func.now() en modelos
 from typing import Optional, List
 
 # Importamos los modelos de SQLAlchemy (para la DB)
 from sql_app import models # Usaremos 'models' para referirnos a sql_app/models.py
-
-# Importamos la función para obtener la sesión de la DB y el engine
-from database import get_db, engine
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
@@ -33,7 +31,8 @@ app = FastAPI(
 
 #----para CORS----#
 origins = [
-    "http://localhost:5173", # Asegúrate de que este sea el puerto de tu frontend
+    "http://localhost:5173", # Ya estaba
+    "http://127.0.0.1:5173", # ¡Nueva línea crucial!
 ]
 
 app.add_middleware(
@@ -52,6 +51,7 @@ async def startup_event():
         await conn.run_sync(models.Base.metadata.create_all)
     print("Base de datos y tablas verificadas/creadas al iniciar la aplicación.")
 
+# ... (El resto de tus endpoints permanece igual) ...
 
 # --- Endpoints para Analistas ---
 
@@ -72,29 +72,39 @@ async def crear_analista(analista: AnalistaBase, db: AsyncSession = Depends(get_
     return db_analista
 
 
-@app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas")
+@app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas Activos") # CORREGIDO: Usar List[Analista] directamente
 async def obtener_analistas(db: AsyncSession = Depends(get_db)):
     """
-    Obtiene la lista de todos los analistas desde la base de datos.
+    Obtiene la lista de todos los analistas **activos** desde la base de datos.
     """
-    result = await db.execute(select(models.Analista))
+    result = await db.execute(select(models.Analista).where(models.Analista.esta_activo == True)) # Filtrar por activo
     analistas = result.scalars().all()
-    # Pydantic v2: model_validate se usa en lugar de from_orm.
-    # No es estrictamente necesario aquí si ConfigDict(from_attributes=True) está bien en el esquema,
-    # pero es una forma explícita de asegurarlo.
     return analistas
 
 
-@app.get("/analistas/{analista_id}", response_model=Analista, summary="Obtener Analista por ID")
+@app.get("/analistas/{analista_id}", response_model=Analista, summary="Obtener Analista por ID (activo)") # CORREGIDO: Usar Analista directamente
 async def obtener_analista_por_id(analista_id: int, db: AsyncSession = Depends(get_db)):
     """
-    Obtiene un analista específico por su ID interno desde la base de datos.
+    Obtiene los detalles de un analista **activo** específico por su ID.
     """
-    result = await db.execute(select(models.Analista).filter(models.Analista.id == analista_id))
+    result = await db.execute(select(models.Analista).filter(models.Analista.id == analista_id, models.Analista.esta_activo == True)) # Filtrar por activo
     analista = result.scalars().first()
     if not analista:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado o inactivo.")
     return analista
+
+
+@app.get("/analistas/todos/", response_model=List[Analista], summary="Obtener todos los Analistas (activos e inactivos)") # CORREGIDO: Usar List[Analista] directamente
+async def get_all_analistas(include_inactive: bool = False, db: AsyncSession = Depends(get_db)):
+    """
+    Obtiene una lista de todos los analistas, incluyendo inactivos si `include_inactive` es True.
+    """
+    query = select(models.Analista)
+    if not include_inactive:
+        query = query.where(models.Analista.esta_activo == True)
+    result = await db.execute(query)
+    analistas = result.scalars().all()
+    return analistas
 
 
 @app.get("/analistas/bms/{bms_id}", response_model=Analista, summary="Obtener Analista por BMS ID")
@@ -102,12 +112,57 @@ async def obtener_analista_por_bms_id(bms_id: int, db: AsyncSession = Depends(ge
     """
     Obtiene un analista específico por su BMS ID (legajo) desde la base de datos.
     """
-    result = await db.execute(select(models.Analista).filter(models.Analista.bms_id == bms_id))
+    result = await db.execute(select(models.Analista).filter(models.Analista.bms_id == bms_id, models.Analista.esta_activo == True)) # Filtrar por activo
     analista = result.scalars().first()
     if not analista:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado por BMS ID.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado por BMS ID o inactivo.")
     return analista
 
+@app.put("/analistas/{analista_id}", response_model=Analista, summary="Actualizar un Analista existente")
+async def actualizar_analista(analista_id: int, analista_update: AnalistaBase, db: AsyncSession = Depends(get_db)):
+    """
+    Actualiza la información de un analista existente.
+
+    - **analista_id**: El ID del analista a actualizar.
+    - **analista_update**: Objeto AnalistaBase con los datos actualizados (nombre, apellido, email, bms_id).
+    """
+    db_analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
+    analista_existente = db_analista_result.scalars().first()
+
+    if analista_existente is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado")
+
+    analista_data = analista_update.model_dump(exclude_unset=True)
+    for key, value in analista_data.items():
+        setattr(analista_existente, key, value)
+
+    await db.commit()
+    await db.refresh(analista_existente) # Refresca la instancia con los datos actualizados de la DB
+    return analista_existente
+
+
+@app.delete("/analistas/{analista_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desactivar un Analista") # Cambié el summary
+async def desactivar_analista(analista_id: int, db: AsyncSession = Depends(get_db)): # Cambié el nombre de la función
+    """
+    Desactiva (soft delete) un analista existente en la base de datos.
+    El analista no se elimina físicamente, solo se marca como inactivo.
+
+    - **analista_id**: El ID del analista a desactivar.
+    """
+    # Primero, busca el analista
+    db_analista = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
+    analista_a_desactivar = db_analista.scalar_one_or_none()
+
+    if analista_a_desactivar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+
+    # Marca el analista como inactivo
+    analista_a_desactivar.esta_activo = False
+    
+    await db.commit() # Confirma el cambio en la base de datos
+    await db.refresh(analista_a_desactivar) # Opcional: para refrescar el objeto si lo necesitas
+
+    return # Retorna un 204 No Content para indicar éxito sin contenido de respuesta.
 
 # --- Endpoints para Campañas ---
 

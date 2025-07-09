@@ -52,6 +52,7 @@ class Analista(Base):
     email = Column(String, unique=True, index=True, nullable=False) # Añadido nullable=False
     bms_id = Column(Integer, unique=True, index=True, nullable=False) # Añadido nullable=False
     fecha_creacion = Column(DateTime(timezone=True), server_default=func.now(), nullable=False) # Usar func.now() para la DB
+    esta_activo = Column(Boolean, default=True, nullable=False) # ¡Añadido el campo esta_activo!
 
     # Relaciones inversas (back_populates debe apuntar al nombre del atributo de relación en el otro modelo)
     tareas = relationship("Tarea", back_populates="analista", cascade="all, delete-orphan") # Añadido cascade

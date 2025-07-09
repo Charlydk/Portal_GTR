@@ -66,6 +66,7 @@ class AcuseReciboAvisoBase(BaseModel):
 class Analista(AnalistaBase):
     id: int
     fecha_creacion: datetime
+    esta_activo: bool # ¡Añadido el campo esta_activo!
     # No es necesario poner las relaciones inversas aquí a menos que quieras anidarlas en el response de Analista
     # tareas: List["Tarea"] = [] # Ejemplo si quisieras que un Analista incluyera sus tareas
     # avisos_creados: List["Aviso"] = []

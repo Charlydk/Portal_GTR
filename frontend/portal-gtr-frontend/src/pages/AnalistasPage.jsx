@@ -83,7 +83,8 @@ function AnalistasPage() { // Renombramos el componente a AnalistasPage
   return (
     <div className="container mt-4">
       <h2>Lista de Analistas</h2>
-      <Link to="/analistas/nuevo" className="btn btn-primary mb-3">
+      {/* ¡CORRECCIÓN CLAVE AQUÍ! El 'to' debe ser '/analistas/crear' */}
+      <Link to="/analistas/crear" className="btn btn-primary mb-3"> 
         Crear Nuevo Analista
       </Link>
       {analistas.length === 0 ? (
