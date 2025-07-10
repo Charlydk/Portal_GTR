@@ -1,36 +1,42 @@
 from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware # para CORS
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Importa para OAuth2 y login
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload # Importa selectinload
+from sqlalchemy.orm import selectinload
 from sqlalchemy import func # Importa func para default=func.now() en modelos
+from datetime import timedelta # ¡NUEVO! Importa timedelta
 from typing import Optional, List
 
 # Importamos los modelos de SQLAlchemy (para la DB)
-from sql_app import models # Usaremos 'models' para referirnos a sql_app/models.py
+from sql_app import models
+from sql_app.models import UserRole # Importa el Enum UserRole
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
-    AnalistaBase, Analista,
+    AnalistaBase, Analista, AnalistaCreate, # AnalistaCreate para registro
     CampanaBase, Campana,
     TareaBase, Tarea,
     ChecklistItemBase, ChecklistItem,
     ComentarioCampanaBase, ComentarioCampana,
     AvisoBase, Aviso,
-    AcuseReciboAvisoBase, AcuseReciboAviso,
-    AcuseReciboCreate, # ¡NUEVO! Importamos el modelo para el cuerpo de la solicitud
-    ProgresoTarea
+    AcuseReciboAvisoBase, AcuseReciboAviso, AcuseReciboCreate,
+    ProgresoTarea,
+    Token, TokenData # Para autenticación
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
 from database import get_db, engine
+
+# Importa las utilidades de seguridad
+from security import verify_password, get_password_hash, create_access_token, decode_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 
 app = FastAPI(
     title="Portal GTR API",
     description="API para la gestión de analistas, campañas, tareas, avisos y acuses de recibo."
 )
 
-#----para CORS----#
+# Configuración de CORS
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -44,60 +50,207 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# OAuth2PasswordBearer para manejar tokens en los headers
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @app.on_event("startup")
 async def startup_event():
     async with engine.begin() as conn:
-        # Asegúrate de que Base.metadata.create_all se refiere a la Base correcta de sql_app.models
         await conn.run_sync(models.Base.metadata.create_all)
     print("Base de datos y tablas verificadas/creadas al iniciar la aplicación.")
 
+# --- Funciones de Utilidad para Autenticación ---
 
-# --- Endpoints para Analistas ---
+async def get_analista_by_email(email: str, db: AsyncSession) -> Optional[models.Analista]:
+    """Obtiene un analista por su email."""
+    result = await db.execute(select(models.Analista).filter(models.Analista.email == email))
+    return result.scalars().first()
 
-@app.post("/analistas/", response_model=Analista, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Analista")
-async def crear_analista(analista: AnalistaBase, db: AsyncSession = Depends(get_db)):
+async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> models.Analista:
+    """Dependencia para obtener el analista autenticado a partir del token."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No se pudieron validar las credenciales",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = decode_access_token(token)
+        if payload is None:
+            raise credentials_exception
+        
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+        
+        token_data = TokenData(email=email)
+    except JWTError:
+        raise credentials_exception
+    
+    analista = await get_analista_by_email(token_data.email, db)
+    if analista is None:
+        raise credentials_exception
+    return analista
+
+def require_role(required_roles: List[UserRole]):
+    """Dependencia para requerir roles específicos."""
+    def role_checker(current_analista: models.Analista = Depends(get_current_analista)):
+        if current_analista.role not in required_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permiso para realizar esta acción."
+            )
+        return current_analista
+    return role_checker
+
+
+# --- Endpoints de Autenticación ---
+
+@app.post("/register/", response_model=Analista, status_code=status.HTTP_201_CREATED, summary="Registrar un nuevo Analista")
+async def register_analista(analista: AnalistaCreate, db: AsyncSession = Depends(get_db)):
     """
-    Crea un nuevo analista en el sistema y lo guarda en la base de datos.
+    Registra un nuevo analista en el sistema.
+    La contraseña se encripta antes de guardarse.
     """
-    result = await db.execute(select(models.Analista).filter(models.Analista.bms_id == analista.bms_id))
-    existing_analista = result.scalars().first()
-    if existing_analista:
+    existing_analista_by_email = await get_analista_by_email(analista.email, db)
+    if existing_analista_by_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El email ya está registrado.")
+    
+    result_bms = await db.execute(select(models.Analista).filter(models.Analista.bms_id == analista.bms_id))
+    existing_analista_by_bms = result_bms.scalars().first()
+    if existing_analista_by_bms:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El BMS ID ya existe.")
 
-    db_analista = models.Analista(**analista.model_dump())
+    hashed_password = get_password_hash(analista.password)
+    db_analista = models.Analista(
+        nombre=analista.nombre,
+        apellido=analista.apellido,
+        email=analista.email,
+        bms_id=analista.bms_id,
+        hashed_password=hashed_password,
+        role=analista.role # Asigna el rol desde el input
+    )
+    db.add(db_analista)
+    await db.commit()
+    await db.refresh(db_analista)
+    return db_analista
+
+@app.post("/token", response_model=Token, summary="Obtener Token de Acceso (Login)")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    """
+    Permite a un analista iniciar sesión y obtener un token JWT.
+    Requiere `username` (email) y `password`.
+    """
+    analista = await get_analista_by_email(form_data.username, db)
+    if not analista or not verify_password(form_data.password, analista.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Email o contraseña incorrectos",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not analista.esta_activo:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Usuario inactivo. Contacte al administrador."
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": analista.email, "role": analista.role.value}, # Añade el rol al token
+        expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/users/me/", response_model=Analista, summary="Obtener información del Analista actual")
+async def read_users_me(current_analista: models.Analista = Depends(get_current_analista)):
+    """
+    Obtiene la información del analista que actualmente ha iniciado sesión.
+    Requiere autenticación.
+    """
+    return current_analista
+
+
+# --- Endpoints para Analistas (Protegidos) ---
+
+# El endpoint de creación de analistas ahora usa AnalistaCreate y puede ser protegido
+@app.post("/analistas/", response_model=Analista, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Analista (Protegido por Supervisor/Responsable)")
+async def crear_analista(
+    analista: AnalistaCreate, # Usamos AnalistaCreate para el registro inicial
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables pueden crear
+):
+    """
+    Crea un nuevo analista en el sistema y lo guarda en la base de datos.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    """
+    existing_analista_by_email = await get_analista_by_email(analista.email, db)
+    if existing_analista_by_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El email ya está registrado.")
+    
+    result_bms = await db.execute(select(models.Analista).filter(models.Analista.bms_id == analista.bms_id))
+    existing_analista_by_bms = result_bms.scalars().first()
+    if existing_analista_by_bms:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El BMS ID ya existe.")
+
+    hashed_password = get_password_hash(analista.password)
+    db_analista = models.Analista(
+        nombre=analista.nombre,
+        apellido=analista.apellido,
+        email=analista.email,
+        bms_id=analista.bms_id,
+        hashed_password=hashed_password,
+        role=analista.role # Asigna el rol desde el input
+    )
     db.add(db_analista)
     await db.commit()
     await db.refresh(db_analista)
     return db_analista
 
 
-@app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas Activos")
-async def obtener_analistas(db: AsyncSession = Depends(get_db)):
+@app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas Activos (Protegido por Supervisor/Responsable)")
+async def obtener_analistas(
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
+):
     """
     Obtiene la lista de todos los analistas **activos** desde la base de datos.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     result = await db.execute(select(models.Analista).where(models.Analista.esta_activo == True))
     analistas = result.scalars().all()
     return analistas
 
 
-@app.get("/analistas/{analista_id}", response_model=Analista, summary="Obtener Analista por ID (activo)")
-async def obtener_analista_por_id(analista_id: int, db: AsyncSession = Depends(get_db)):
+@app.get("/analistas/{analista_id}", response_model=Analista, summary="Obtener Analista por ID (activo) (Protegido)")
+async def obtener_analista_por_id(
+    analista_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
+):
     """
     Obtiene los detalles de un analista **activo** específico por su ID.
+    Requiere autenticación.
     """
     result = await db.execute(select(models.Analista).filter(models.Analista.id == analista_id, models.Analista.esta_activo == True))
     analista = result.scalars().first()
     if not analista:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado o inactivo.")
+    
+    # Un analista normal solo puede ver su propio perfil
+    if current_analista.role == UserRole.ANALISTA and current_analista.id != analista_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este perfil de analista.")
+
     return analista
 
 
-@app.get("/analistas/todos/", response_model=List[Analista], summary="Obtener todos los Analistas (activos e inactivos)")
-async def get_all_analistas(include_inactive: bool = False, db: AsyncSession = Depends(get_db)):
+@app.get("/analistas/todos/", response_model=List[Analista], summary="Obtener todos los Analistas (activos e inactivos) (Protegido por Supervisor)")
+async def get_all_analistas(
+    include_inactive: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR])) # Solo Supervisores
+):
     """
     Obtiene una lista de todos los analistas, incluyendo inactivos si `include_inactive` es True.
+    Requiere autenticación y rol de SUPERVISOR.
     """
     query = select(models.Analista)
     if not include_inactive:
@@ -107,24 +260,38 @@ async def get_all_analistas(include_inactive: bool = False, db: AsyncSession = D
     return analistas
 
 
-@app.get("/analistas/bms/{bms_id}", response_model=Analista, summary="Obtener Analista por BMS ID")
-async def obtener_analista_por_bms_id(bms_id: int, db: AsyncSession = Depends(get_db)):
+@app.get("/analistas/bms/{bms_id}", response_model=Analista, summary="Obtener Analista por BMS ID (Protegido)")
+async def obtener_analista_por_bms_id(
+    bms_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
+):
     """
     Obtiene un analista específico por su BMS ID (legajo) desde la base de datos.
+    Requiere autenticación. Un analista normal solo puede ver su propio perfil.
     """
     result = await db.execute(select(models.Analista).filter(models.Analista.bms_id == bms_id, models.Analista.esta_activo == True))
     analista = result.scalars().first()
     if not analista:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado por BMS ID o inactivo.")
+    
+    # Un analista normal solo puede ver su propio perfil por BMS ID
+    if current_analista.role == UserRole.ANALISTA and current_analista.bms_id != bms_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este perfil de analista.")
+
     return analista
 
-@app.put("/analistas/{analista_id}", response_model=Analista, summary="Actualizar un Analista existente")
-async def actualizar_analista(analista_id: int, analista_update: AnalistaBase, db: AsyncSession = Depends(get_db)):
+@app.put("/analistas/{analista_id}", response_model=Analista, summary="Actualizar un Analista existente (Protegido por Supervisor/Responsable)")
+async def actualizar_analista(
+    analista_id: int,
+    analista_update: AnalistaBase, # AnalistaBase para actualización (no incluye password)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
+):
     """
     Actualiza la información de un analista existente.
-
-    - **analista_id**: El ID del analista a actualizar.
-    - **analista_update**: Objeto AnalistaBase con los datos actualizados (nombre, apellido, email, bms_id).
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Los analistas solo pueden actualizar su propio perfil.
     """
     db_analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
     analista_existente = db_analista_result.scalars().first()
@@ -132,31 +299,80 @@ async def actualizar_analista(analista_id: int, analista_update: AnalistaBase, d
     if analista_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado")
 
+    # Un responsable solo puede editar analistas normales
+    if current_analista.role == UserRole.RESPONSABLE and analista_existente.role != UserRole.ANALISTA:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede editar perfiles de Analistas normales.")
+    
+    # Un analista normal NO puede usar este endpoint para actualizar su perfil (solo la password)
+    if current_analista.role == UserRole.ANALISTA:
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Los analistas no pueden usar este endpoint para actualizar su perfil.")
+
+
     analista_data = analista_update.model_dump(exclude_unset=True)
     for key, value in analista_data.items():
+        # No permitir la actualización de la contraseña o el rol a través de este endpoint
+        if key == "hashed_password" or key == "role":
+            continue
         setattr(analista_existente, key, value)
 
     await db.commit()
     await db.refresh(analista_existente)
     return analista_existente
 
+@app.put("/analistas/{analista_id}/password", response_model=Analista, summary="Actualizar contraseña de un Analista (Protegido)")
+async def update_analista_password(
+    analista_id: int,
+    new_password: str,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Actualiza la contraseña de un analista.
+    Un analista puede actualizar su propia contraseña.
+    Un Responsable puede actualizar la contraseña de un Analista normal.
+    Un Supervisor puede actualizar cualquier contraseña.
+    """
+    db_analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
+    analista_a_actualizar = db_analista_result.scalars().first()
 
-@app.delete("/analistas/{analista_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desactivar un Analista")
-async def desactivar_analista(analista_id: int, db: AsyncSession = Depends(get_db)):
+    if analista_a_actualizar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+
+    # Lógica de autorización
+    if current_analista.role == UserRole.ANALISTA and current_analista.id != analista_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar esta contraseña.")
+    
+    if current_analista.role == UserRole.RESPONSABLE and analista_a_actualizar.role != UserRole.ANALISTA:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede actualizar la contraseña de Analistas normales.")
+    
+    hashed_password = get_password_hash(new_password)
+    analista_a_actualizar.hashed_password = hashed_password
+
+    await db.commit()
+    await db.refresh(analista_a_actualizar)
+    return analista_a_actualizar
+
+
+@app.delete("/analistas/{analista_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desactivar un Analista (Protegido por Supervisor)")
+async def desactivar_analista(
+    analista_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR])) # Solo Supervisores
+):
     """
     Desactiva (soft delete) un analista existente en la base de datos.
     El analista no se elimina físicamente, solo se marca como inactivo.
-
-    - **analista_id**: El ID del analista a desactivar.
+    Requiere autenticación y rol de SUPERVISOR.
     """
-    # Primero, busca el analista
     db_analista = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
     analista_a_desactivar = db_analista.scalar_one_or_none()
 
     if analista_a_desactivar is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
-    # Marca el analista como inactivo
+    if analista_a_desactivar.id == current_analista.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No puedes desactivarte a ti mismo.")
+
     analista_a_desactivar.esta_activo = False
     
     await db.commit()
@@ -164,12 +380,17 @@ async def desactivar_analista(analista_id: int, db: AsyncSession = Depends(get_d
 
     return
 
-# --- Endpoints para Campañas ---
+# --- Endpoints para Campañas (Protegidos) ---
 
-@app.post("/campanas/", response_model=Campana, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Campaña")
-async def crear_campana(campana: CampanaBase, db: AsyncSession = Depends(get_db)):
+@app.post("/campanas/", response_model=Campana, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Campaña (Protegido por Supervisor/Responsable)")
+async def crear_campana(
+    campana: CampanaBase,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
+):
     """
     Crea una nueva campaña en el sistema y la guarda en la base de datos.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     db_campana = models.Campana(**campana.model_dump())
     db.add(db_campana)
@@ -178,20 +399,29 @@ async def crear_campana(campana: CampanaBase, db: AsyncSession = Depends(get_db)
     return db_campana
 
 
-@app.get("/campanas/", response_model=List[Campana], summary="Obtener todas las Campañas")
-async def obtener_campanas(db: AsyncSession = Depends(get_db)):
+@app.get("/campanas/", response_model=List[Campana], summary="Obtener todas las Campañas (Protegido)")
+async def obtener_campanas(
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
+):
     """
     Obtiene la lista de todas las campañas desde la base de datos.
+    Requiere autenticación.
     """
     result = await db.execute(select(models.Campana))
     campanas = result.scalars().all()
     return campanas
 
 
-@app.get("/campanas/{campana_id}", response_model=Campana, summary="Obtener Campaña por ID")
-async def obtener_campana_por_id(campana_id: int, db: AsyncSession = Depends(get_db)):
+@app.get("/campanas/{campana_id}", response_model=Campana, summary="Obtener Campaña por ID (Protegido)")
+async def obtener_campana_por_id(
+    campana_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
+):
     """
     Obtiene una campaña específica por su ID desde la base de datos.
+    Requiere autenticación.
     """
     result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
     campana = result.scalars().first()
@@ -199,13 +429,16 @@ async def obtener_campana_por_id(campana_id: int, db: AsyncSession = Depends(get
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
     return campana
 
-@app.put("/campanas/{campana_id}", response_model=Campana, summary="Actualizar una Campaña existente")
-async def actualizar_campana(campana_id: int, campana: CampanaBase, db: AsyncSession = Depends(get_db)):
+@app.put("/campanas/{campana_id}", response_model=Campana, summary="Actualizar una Campaña existente (Protegido por Supervisor/Responsable)")
+async def actualizar_campana(
+    campana_id: int,
+    campana_update: CampanaBase,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
+):
     """
     Actualiza la información de una campaña existente.
-
-    - **campana_id**: El ID de la campaña a actualizar.
-    - **campana**: Objeto CampanaBase con los datos actualizados (nombre, descripción, fecha_inicio, fecha_fin).
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     db_campana = await db.execute(select(models.Campana).where(models.Campana.id == campana_id))
     campana_existente = db_campana.scalar_one_or_none()
@@ -213,7 +446,7 @@ async def actualizar_campana(campana_id: int, campana: CampanaBase, db: AsyncSes
     if campana_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada")
 
-    campana_data = campana.model_dump(exclude_unset=True) # Solo actualiza los campos proporcionados
+    campana_data = campana_update.model_dump(exclude_unset=True)
     for key, value in campana_data.items():
         setattr(campana_existente, key, value)
 
@@ -222,12 +455,15 @@ async def actualizar_campana(campana_id: int, campana: CampanaBase, db: AsyncSes
     return campana_existente
 
 
-@app.delete("/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Campaña")
-async def eliminar_campana(campana_id: int, db: AsyncSession = Depends(get_db)):
+@app.delete("/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Campaña (Protegido por Supervisor)")
+async def eliminar_campana(
+    campana_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR])) # Solo Supervisores
+):
     """
     Elimina una campaña existente.
-
-    - **campana_id**: El ID de la campaña a eliminar.
+    Requiere autenticación y rol de SUPERVISOR.
     """
     db_campana = await db.execute(select(models.Campana).where(models.Campana.id == campana_id))
     campana_a_eliminar = db_campana.scalar_one_or_none()
@@ -240,21 +476,23 @@ async def eliminar_campana(campana_id: int, db: AsyncSession = Depends(get_db)):
     return
 
 
-# --- Endpoints para Tareas ---
+# --- Endpoints para Tareas (Protegidos) ---
 
-@app.post("/tareas/", response_model=Tarea, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Tarea")
-async def crear_tarea(tarea: TareaBase, db: AsyncSession = Depends(get_db)):
+@app.post("/tareas/", response_model=Tarea, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Tarea (Protegido por Supervisor/Responsable)")
+async def crear_tarea(
+    tarea: TareaBase,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
+):
     """
     Crea una nueva tarea en el sistema y la guarda en la base de datos.
-    Verifica que el analista y la campaña existan.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
-    # Verificamos si el analista existe
     analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea.analista_id))
     analista_existente = analista_result.scalars().first()
     if not analista_existente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Analista con ID {tarea.analista_id} no encontrado.")
 
-    # Verificamos si la campaña existe
     campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == tarea.campana_id))
     campana_existente = campana_result.scalars().first()
     if not campana_existente:
@@ -265,8 +503,6 @@ async def crear_tarea(tarea: TareaBase, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(db_tarea)
 
-    # Después de crear la tarea, recárgala con sus relaciones para que el response_model la serialice correctamente.
-    # Esto es crucial para que los campos 'analista' y 'campana' del Pydantic Tarea se llenen.
     await db.execute(
         select(models.Tarea)
         .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana))
@@ -275,73 +511,87 @@ async def crear_tarea(tarea: TareaBase, db: AsyncSession = Depends(get_db)):
     return db_tarea
 
 
-@app.get("/tareas/", response_model=List[Tarea], summary="Obtener Tareas (con filtros opcionales)")
+@app.get("/tareas/", response_model=List[Tarea], summary="Obtener Tareas (con filtros opcionales) (Protegido)")
 async def obtener_tareas(
     db: AsyncSession = Depends(get_db),
     analista_id: Optional[int] = None,
-    campana_id: Optional[int] = None
+    campana_id: Optional[int] = None,
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
-    Obtiene todas las tareas, o filtra por analista y/o campaña, cargando también los detalles de Analista y Campaña.
-
-    - **analista_id**: ID del analista para filtrar tareas. (Opcional)
-    - **campana_id**: ID de la campaña para filtrar tareas. (Opcional)
+    Obtiene todas las tareas, o filtra por analista y/o campaña.
+    Requiere autenticación.
+    Un analista normal solo ve sus propias tareas.
     """
     query = select(models.Tarea).options(
-        selectinload(models.Tarea.analista), # Carga el objeto analista relacionado
-        selectinload(models.Tarea.campana)   # Carga el objeto campaña relacionado
+        selectinload(models.Tarea.analista),
+        selectinload(models.Tarea.campana)
     )
-    if analista_id:
-        query = query.where(models.Tarea.analista_id == analista_id)
-    if campana_id:
-        query = query.where(models.Tarea.campana_id == campana_id)
+
+    if current_analista.role == UserRole.ANALISTA:
+        # Si es un analista normal, solo puede ver sus propias tareas
+        query = query.where(models.Tarea.analista_id == current_analista.id)
+    else:
+        # Para supervisores y responsables, se aplican los filtros opcionales
+        if analista_id:
+            query = query.where(models.Tarea.analista_id == analista_id)
+        if campana_id:
+            query = query.where(models.Tarea.campana_id == campana_id)
 
     tareas = await db.execute(query)
     return tareas.scalars().unique().all()
 
 
-@app.get("/tareas/{tarea_id}", response_model=Tarea, summary="Obtener Tarea por ID")
-async def obtener_tarea_por_id(tarea_id: int, db: AsyncSession = Depends(get_db)):
+@app.get("/tareas/{tarea_id}", response_model=Tarea, summary="Obtener Tarea por ID (Protegido)")
+async def obtener_tarea_por_id(
+    tarea_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
+):
     """
-    Obtiene una tarea específica por su ID desde la base de datos, incluyendo nombres de Analista y Campaña.
+    Obtiene una tarea específica por su ID.
+    Requiere autenticación. Un analista normal solo ve sus propias tareas.
     """
     result = await db.execute(
         select(models.Tarea)
         .filter(models.Tarea.id == tarea_id)
         .options(
-            selectinload(models.Tarea.analista), # Carga el objeto analista relacionado
-            selectinload(models.Tarea.campana)   # Carga el objeto campaña relacionado
+            selectinload(models.Tarea.analista),
+            selectinload(models.Tarea.campana)
         )
     )
-    tarea = result.scalars().first() # .first() devuelve uno o None
+    tarea = result.scalars().first()
     if not tarea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada.")
+    
+    # Un analista normal solo puede ver sus propias tareas
+    if current_analista.role == UserRole.ANALISTA and tarea.analista_id != current_analista.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver esta tarea.")
+
     return tarea
 
 
-@app.put("/tareas/{tarea_id}", response_model=Tarea, summary="Actualizar una Tarea existente")
+@app.put("/tareas/{tarea_id}", response_model=Tarea, summary="Actualizar una Tarea existente (Protegido por Supervisor/Responsable)")
 async def actualizar_tarea(
     tarea_id: int,
     tarea_update: TareaBase,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
 ):
     """
     Actualiza la información de una tarea existente.
-
-    - **tarea_id**: El ID de la tarea a actualizar.
-    - **tarea_update**: Objeto TareaBase con los datos actualizados.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     db_tarea_result = await db.execute(
         select(models.Tarea)
         .filter(models.Tarea.id == tarea_id)
-        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana)) # Carga las relaciones para el refresh
+        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana))
     )
     tarea_existente = db_tarea_result.scalars().first()
 
     if tarea_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
 
-    # Validar si el analista o la campaña han cambiado y existen
     if tarea_update.analista_id != tarea_existente.analista_id:
         analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea_update.analista_id))
         if analista_result.scalars().first() is None:
@@ -352,7 +602,6 @@ async def actualizar_tarea(
         if campana_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nueva Campaña con ID {tarea_update.campana_id} no encontrada.")
 
-    # Actualizar los campos
     tarea_data = tarea_update.model_dump(exclude_unset=True)
     for key, value in tarea_data.items():
         setattr(tarea_existente, key, value)
@@ -362,12 +611,15 @@ async def actualizar_tarea(
     return tarea_existente
 
 
-@app.delete("/tareas/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea")
-async def eliminar_tarea(tarea_id: int, db: AsyncSession = Depends(get_db)):
+@app.delete("/tareas/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea (Protegido por Supervisor)")
+async def eliminar_tarea(
+    tarea_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR])) # Solo Supervisores
+):
     """
     Elimina una tarea existente.
-
-    - **tarea_id**: El ID de la tarea a eliminar.
+    Requiere autenticación y rol de SUPERVISOR.
     """
     db_tarea = await db.execute(select(models.Tarea).where(models.Tarea.id == tarea_id))
     tarea_a_eliminar = db_tarea.scalar_one_or_none()
@@ -380,17 +632,17 @@ async def eliminar_tarea(tarea_id: int, db: AsyncSession = Depends(get_db)):
     return
 
 
-# --- Endpoints para checklist tareas ---
+# --- Endpoints para checklist tareas (Protegidos) ---
 
-@app.post("/checklist_items/", response_model=ChecklistItem, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo ChecklistItem")
+@app.post("/checklist_items/", response_model=ChecklistItem, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo ChecklistItem (Protegido por Supervisor/Responsable)")
 async def crear_checklist_item(
     item: ChecklistItemBase,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
 ):
     """
     Crea un nuevo elemento de checklist asociado a una tarea.
-
-    - **item**: Objeto ChecklistItemBase con la descripción, estado de completado y el ID de la tarea a la que pertenece.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     tarea_existente_result = await db.execute(select(models.Tarea).where(models.Tarea.id == item.tarea_id))
     if tarea_existente_result.scalars().first() is None:
@@ -402,46 +654,66 @@ async def crear_checklist_item(
     await db.refresh(db_item)
     return db_item
 
-@app.get("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Obtener ChecklistItem por ID")
-async def obtener_checklist_item_por_id(item_id: int, db: AsyncSession = Depends(get_db)):
+@app.get("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Obtener ChecklistItem por ID (Protegido)")
+async def obtener_checklist_item_por_id(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
+):
     """
     Obtiene un ítem de checklist específico por su ID.
+    Requiere autenticación. Un analista normal solo ve ítems de sus propias tareas.
     """
     result = await db.execute(select(models.ChecklistItem).filter(models.ChecklistItem.id == item_id))
     item = result.scalars().first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ChecklistItem no encontrado.")
+    
+    # Si es un analista normal, verifica que el ítem pertenezca a una de sus tareas
+    if current_analista.role == UserRole.ANALISTA:
+        tarea_result = await db.execute(select(models.Tarea).filter(models.Tarea.id == item.tarea_id, models.Tarea.analista_id == current_analista.id))
+        if not tarea_result.scalars().first():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este ChecklistItem.")
+
     return item
 
 
-@app.get("/checklist_items/", response_model=List[ChecklistItem], summary="Obtener ChecklistItems (con filtro opcional por tarea)")
+@app.get("/checklist_items/", response_model=List[ChecklistItem], summary="Obtener ChecklistItems (con filtro opcional por tarea) (Protegido)")
 async def obtener_checklist_items(
     db: AsyncSession = Depends(get_db),
-    tarea_id: Optional[int] = None
+    tarea_id: Optional[int] = None,
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
     Obtiene todos los elementos de checklist, o filtra por ID de tarea.
-
-    - **tarea_id**: ID de la tarea para filtrar los elementos de checklist. (Opcional)
+    Requiere autenticación. Un analista normal solo ve ítems de sus propias tareas.
     """
     query = select(models.ChecklistItem)
-    if tarea_id:
-        query = query.where(models.ChecklistItem.tarea_id == tarea_id)
+    
+    if current_analista.role == UserRole.ANALISTA:
+        # Si es un analista normal, solo puede ver ítems de sus propias tareas
+        # Necesitamos unir con Tarea para filtrar por analista_id
+        query = query.join(models.Tarea).where(models.Tarea.analista_id == current_analista.id)
+        if tarea_id:
+            query = query.where(models.ChecklistItem.tarea_id == tarea_id)
+    else:
+        # Para supervisores y responsables, se aplican los filtros opcionales
+        if tarea_id:
+            query = query.where(models.ChecklistItem.tarea_id == tarea_id)
 
     items = await db.execute(query)
     return items.scalars().all()
 
-@app.put("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Actualizar un ChecklistItem existente")
+@app.put("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Actualizar un ChecklistItem existente (Protegido por Supervisor/Responsable)")
 async def actualizar_checklist_item(
     item_id: int,
     item_update: ChecklistItemBase,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
 ):
     """
     Actualiza la información de un elemento de checklist existente.
-
-    - **item_id**: El ID del elemento de checklist a actualizar.
-    - **item_update**: Objeto ChecklistItemBase con los datos actualizados (descripción, completado, tarea_id).
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     db_item_result = await db.execute(select(models.ChecklistItem).where(models.ChecklistItem.id == item_id))
     item_existente = db_item_result.scalars().first()
@@ -462,12 +734,15 @@ async def actualizar_checklist_item(
     await db.refresh(item_existente)
     return item_existente
 
-@app.delete("/checklist_items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un ChecklistItem")
-async def eliminar_checklist_item(item_id: int, db: AsyncSession = Depends(get_db)):
+@app.delete("/checklist_items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un ChecklistItem (Protegido por Supervisor)")
+async def eliminar_checklist_item(
+    item_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR])) # Solo Supervisores
+):
     """
     Elimina un elemento de checklist existente.
-
-    - **item_id**: El ID del elemento de checklist a eliminar.
+    Requiere autenticación y rol de SUPERVISOR.
     """
     db_item_result = await db.execute(select(models.ChecklistItem).where(models.ChecklistItem.id == item_id))
     item_a_eliminar = db_item_result.scalars().first()
@@ -480,17 +755,17 @@ async def eliminar_checklist_item(item_id: int, db: AsyncSession = Depends(get_d
     return
 
 
-# --- Endpoints para Comentarios de Campaña ---
+# --- Endpoints para Comentarios de Campaña (Protegidos) ---
 
-@app.post("/comentarios_campana/", response_model=ComentarioCampana, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Comentario de Campaña")
+@app.post("/comentarios_campana/", response_model=ComentarioCampana, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Comentario de Campaña (Protegido)")
 async def crear_comentario_campana(
     comentario: ComentarioCampanaBase,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
     Crea un nuevo comentario asociado a una campaña y a un analista.
-
-    - **comentario**: Objeto ComentarioCampanaBase con el contenido, y los IDs del analista y la campaña.
+    Requiere autenticación.
     """
     analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == comentario.analista_id))
     if analista_result.scalars().first() is None:
@@ -505,8 +780,6 @@ async def crear_comentario_campana(
     await db.commit()
     await db.refresh(db_comentario)
 
-    # Después de crear el comentario, recárgalo con su relación de analista
-    # para que el response_model lo serialice correctamente.
     await db.execute(
         select(models.ComentarioCampana)
         .options(selectinload(models.ComentarioCampana.analista))
@@ -515,21 +788,19 @@ async def crear_comentario_campana(
     return db_comentario
 
 
-@app.get("/comentarios_campana/", response_model=List[ComentarioCampana], summary="Obtener Comentarios de Campaña (con filtros opcionales)")
+@app.get("/comentarios_campana/", response_model=List[ComentarioCampana], summary="Obtener Comentarios de Campaña (con filtros opcionales) (Protegido)")
 async def obtener_comentarios_campana(
     db: AsyncSession = Depends(get_db),
     campana_id: Optional[int] = None,
-    analista_id: Optional[int] = None
+    analista_id: Optional[int] = None,
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
     Obtiene todos los comentarios de campaña, o filtra por ID de campaña y/o ID de analista.
-    Carga también los detalles del Analista asociado a cada comentario.
-
-    - **campana_id**: ID de la campaña para filtrar comentarios. (Opcional)
-    - **analista_id**: ID del analista para filtrar comentarios. (Opcional)
+    Requiere autenticación.
     """
     query = select(models.ComentarioCampana).options(
-        selectinload(models.ComentarioCampana.analista) # ¡NUEVO! Carga el objeto analista relacionado
+        selectinload(models.ComentarioCampana.analista)
     )
     if campana_id:
         query = query.where(models.ComentarioCampana.campana_id == campana_id)
@@ -537,15 +808,18 @@ async def obtener_comentarios_campana(
         query = query.where(models.ComentarioCampana.analista_id == analista_id)
 
     comentarios = await db.execute(query)
-    return comentarios.scalars().unique().all() # .unique() es útil si usas múltiples selectinload y evitas duplicados
+    return comentarios.scalars().unique().all()
 
 
-@app.delete("/comentarios_campana/{comentario_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Comentario de Campaña")
-async def eliminar_comentario_campana(comentario_id: int, db: AsyncSession = Depends(get_db)):
+@app.delete("/comentarios_campana/{comentario_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Comentario de Campaña (Protegido por Supervisor)")
+async def eliminar_comentario_campana(
+    comentario_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR])) # Solo Supervisores
+):
     """
     Elimina un comentario de campaña existente.
-
-    - **comentario_id**: El ID del comentario a eliminar.
+    Requiere autenticación y rol de SUPERVISOR.
     """
     db_comentario_result = await db.execute(select(models.ComentarioCampana).where(models.ComentarioCampana.id == comentario_id))
     comentario_a_eliminar = db_comentario_result.scalars().first()
@@ -558,18 +832,17 @@ async def eliminar_comentario_campana(comentario_id: int, db: AsyncSession = Dep
     return
 
 
-# --- Endpoints para Avisos ---
+# --- Endpoints para Avisos (Protegidos) ---
 
-@app.post("/avisos/", response_model=Aviso, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Aviso")
+@app.post("/avisos/", response_model=Aviso, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Aviso (Protegido por Supervisor/Responsable)")
 async def crear_aviso(
     aviso: AvisoBase,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
 ):
     """
     Crea un nuevo aviso.
-
-    - **aviso**: Objeto AvisoBase con el título, contenido, fecha de vencimiento (opcional),
-                  ID del creador (analista) y ID de la campaña (opcional).
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     creador_result = await db.execute(select(models.Analista).where(models.Analista.id == aviso.creador_id))
     if creador_result.scalars().first() is None:
@@ -585,8 +858,6 @@ async def crear_aviso(
     await db.commit()
     await db.refresh(db_aviso)
 
-    # Después de crear el aviso, recárgalo con sus relaciones para que el response_model la serialice correctamente.
-    # Esto es crucial para que los campos 'creador' y 'campana' del Pydantic Aviso se llenen.
     await db.execute(
         select(models.Aviso)
         .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
@@ -594,61 +865,78 @@ async def crear_aviso(
     )
     return db_aviso
 
-@app.get("/avisos/", response_model=List[Aviso], summary="Obtener Avisos (con filtros opcionales)")
+@app.get("/avisos/", response_model=List[Aviso], summary="Obtener Avisos (con filtros opcionales) (Protegido)")
 async def obtener_avisos(
     db: AsyncSession = Depends(get_db),
     creador_id: Optional[int] = None,
-    campana_id: Optional[int] = None
+    campana_id: Optional[int] = None,
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
     Obtiene todos los avisos, o filtra por ID del creador (analista) y/o ID de campaña.
-    Carga también los detalles del Creador y la Campaña asociada a cada aviso.
-
-    - **creador_id**: ID del analista que creó el aviso para filtrar. (Opcional)
-    - **campana_id**: ID de la campaña asociada al aviso para filtrar. (Opcional)
+    Requiere autenticación. Un analista normal solo ve avisos creados por él o asociados a sus campañas.
     """
     query = select(models.Aviso).options(
-        selectinload(models.Aviso.creador), # ¡NUEVO! Carga el objeto analista creador
-        selectinload(models.Aviso.campana)  # ¡NUEVO! Carga el objeto campaña asociada
+        selectinload(models.Aviso.creador),
+        selectinload(models.Aviso.campana)
     )
-    if creador_id:
-        query = query.where(models.Aviso.creador_id == creador_id)
-    if campana_id:
-        query = query.where(models.Aviso.campana_id == campana_id)
+
+    if current_analista.role == UserRole.ANALISTA:
+        # Un analista normal solo ve avisos que él creó o que están asociados a campañas en las que participa (a través de tareas)
+        # Esto es un poco más complejo y podría requerir una lógica de negocio más profunda.
+        # Por ahora, un analista normal solo verá los avisos que él creó.
+        query = query.where(models.Aviso.creador_id == current_analista.id)
+    else:
+        # Para supervisores y responsables, se aplican los filtros opcionales
+        if creador_id:
+            query = query.where(models.Aviso.creador_id == creador_id)
+        if campana_id:
+            query = query.where(models.Aviso.campana_id == campana_id)
 
     avisos = await db.execute(query)
     return avisos.scalars().unique().all()
 
 
-@app.get("/avisos/{aviso_id}", response_model=Aviso, summary="Obtener Aviso por ID")
-async def obtener_aviso_por_id(aviso_id: int, db: AsyncSession = Depends(get_db)):
+@app.get("/avisos/{aviso_id}", response_model=Aviso, summary="Obtener Aviso por ID (Protegido)")
+async def obtener_aviso_por_id(
+    aviso_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
+):
     """
-    Obtiene un aviso específico por su ID desde la base de datos, incluyendo detalles del Creador y Campaña.
+    Obtiene un aviso específico por su ID.
+    Requiere autenticación. Un analista normal solo ve avisos que él creó o asociados a sus campañas.
     """
     result = await db.execute(
         select(models.Aviso)
         .filter(models.Aviso.id == aviso_id)
         .options(
-            selectinload(models.Aviso.creador), # ¡NUEVO! Carga el objeto analista creador
-            selectinload(models.Aviso.campana)  # ¡NUEVO! Carga el objeto campaña asociada
+            selectinload(models.Aviso.creador),
+            selectinload(models.Aviso.campana)
         )
     )
     aviso = result.scalars().first()
     if not aviso:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
+    
+    # Un analista normal solo puede ver avisos que él creó
+    if current_analista.role == UserRole.ANALISTA and aviso.creador_id != current_analista.id:
+        # Para permitir ver avisos de sus campañas, necesitaríamos una lógica más compleja
+        # que verifique si el analista tiene tareas en la campaña asociada al aviso.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este aviso.")
+
     return aviso
 
-@app.put("/avisos/{aviso_id}", response_model=Aviso, summary="Actualizar un Aviso existente")
+@app.put("/avisos/{aviso_id}", response_model=Aviso, summary="Actualizar un Aviso existente (Protegido por Supervisor/Responsable)")
 async def actualizar_aviso(
     aviso_id: int,
     aviso_update: AvisoBase,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE])) # Solo Supervisores y Responsables
 ):
     """
     Actualiza la información de un aviso existente.
-
-    - **aviso_id**: El ID del aviso a actualizar.
-    - **aviso_update**: Objeto AvisoBase con los datos actualizados.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
     db_aviso_result = await db.execute(select(models.Aviso).where(models.Aviso.id == aviso_id))
     aviso_existente = db_aviso_result.scalars().first()
@@ -656,35 +944,28 @@ async def actualizar_aviso(
     if aviso_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
 
-    # Validar si el creador o la campaña han cambiado y existen
     if aviso_update.creador_id != aviso_existente.creador_id:
         nuevo_creador_result = await db.execute(select(models.Analista).where(models.Analista.id == aviso_update.creador_id))
         if nuevo_creador_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nuevo Analista creador no encontrado para reasignar el Aviso.")
         aviso_existente.creador_id = aviso_update.creador_id
 
-    # Manejar el caso de campana_id que puede ser None
     if aviso_update.campana_id is not None and aviso_update.campana_id != aviso_existente.campana_id:
         nueva_campana_result = await db.execute(select(models.Campana).where(models.Campana.id == aviso_update.campana_id))
         if nueva_campana_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Campaña no encontrada para reasignar el Aviso.")
         aviso_existente.campana_id = aviso_update.campana_id
     elif aviso_update.campana_id is None and aviso_existente.campana_id is not None:
-        # Si se cambia de una campaña a ninguna
         aviso_existente.campana_id = None
 
-
-    # Actualizar los campos
     aviso_data = aviso_update.model_dump(exclude_unset=True)
     for key, value in aviso_data.items():
-        # Excluir creador_id y campana_id si ya los manejamos explícitamente
         if key not in ['creador_id', 'campana_id']:
             setattr(aviso_existente, key, value)
 
     await db.commit()
-    await db.refresh(aviso_existente) # Refresca los atributos directos
+    await db.refresh(aviso_existente)
 
-    # Después de actualizar, recarga el aviso con sus relaciones para el response_model
     updated_aviso_result = await db.execute(
         select(models.Aviso)
         .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
@@ -692,18 +973,20 @@ async def actualizar_aviso(
     )
     updated_aviso = updated_aviso_result.scalars().first()
     if not updated_aviso:
-        # Esto no debería pasar si aviso_existente no era None, pero es una buena práctica defensiva
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el aviso después de la actualización.")
     
     return updated_aviso
 
 
-@app.delete("/avisos/{aviso_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Aviso")
-async def eliminar_aviso(aviso_id: int, db: AsyncSession = Depends(get_db)):
+@app.delete("/avisos/{aviso_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Aviso (Protegido por Supervisor)")
+async def eliminar_aviso(
+    aviso_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR])) # Solo Supervisores
+):
     """
     Elimina un aviso existente.
-
-    - **aviso_id**: El ID del aviso a eliminar.
+    Requiere autenticación y rol de SUPERVISOR.
     """
     db_aviso_result = await db.execute(select(models.Aviso).where(models.Aviso.id == aviso_id))
     aviso_a_eliminar = db_aviso_result.scalars().first()
@@ -716,28 +999,30 @@ async def eliminar_aviso(aviso_id: int, db: AsyncSession = Depends(get_db)):
     return
 
 
-# --- Endpoints para Acuses de Recibo de Avisos ---
+# --- Endpoints para Acuses de Recibo de Avisos (Protegidos) ---
 
-@app.post("/avisos/{aviso_id}/acuse_recibo", response_model=AcuseReciboAviso, status_code=status.HTTP_201_CREATED, summary="Registrar acuse de recibo para un Aviso")
+@app.post("/avisos/{aviso_id}/acuse_recibo", response_model=AcuseReciboAviso, status_code=status.HTTP_201_CREATED, summary="Registrar acuse de recibo para un Aviso (Protegido)")
 async def registrar_acuse_recibo(
-    aviso_id: int, # Viene del path de la URL
-    acuse_data: AcuseReciboCreate, # ¡NUEVO! Viene del cuerpo de la solicitud
-    db: AsyncSession = Depends(get_db)
+    aviso_id: int,
+    acuse_data: AcuseReciboCreate,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
     Registra que un analista ha visto y acusado un aviso específico.
-
-    - **aviso_id**: ID del aviso al que se le da acuse de recibo (del path).
-    - **acuse_data**: Objeto AcuseReciboCreate con el ID del analista (del body).
+    Requiere autenticación. Un analista solo puede acusar recibo para sí mismo.
     """
-    analista_id = acuse_data.analista_id # Extraemos analista_id del objeto del cuerpo
+    analista_id = acuse_data.analista_id
+
+    # Un analista normal solo puede acusar recibo para sí mismo
+    if current_analista.role == UserRole.ANALISTA and analista_id != current_analista.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para registrar un acuse de recibo para otro analista.")
 
     analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
     analista_existente = analista_result.scalars().first()
     if analista_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
-    # Cargar el aviso con sus relaciones anidadas para el response_model
     aviso_result = await db.execute(
         select(models.Aviso)
         .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
@@ -760,62 +1045,72 @@ async def registrar_acuse_recibo(
     await db.commit()
     await db.refresh(db_acuse)
 
-    # Después de crear el acuse, recárgalo con sus relaciones para que el response_model la serialice correctamente.
-    # ¡NUEVO! Carga anidada para el aviso dentro del acuse
     await db.execute(
         select(models.AcuseReciboAviso)
         .options(
             selectinload(models.AcuseReciboAviso.analista),
-            selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador), # Carga creador del aviso
-            selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)  # Carga campaña del aviso
+            selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador),
+            selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)
         )
         .filter(models.AcuseReciboAviso.id == db_acuse.id)
     )
     return db_acuse
 
-@app.get("/avisos/{aviso_id}/acuses_recibo", response_model=List[AcuseReciboAviso], summary="Obtener acuses de recibo para un Aviso")
+@app.get("/avisos/{aviso_id}/acuses_recibo", response_model=List[AcuseReciboAviso], summary="Obtener acuses de recibo para un Aviso (Protegido)")
 async def obtener_acuses_recibo_por_aviso(
     aviso_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
     Obtiene todos los acuses de recibo para un aviso específico.
-    Carga también los detalles del Analista que acusó recibo y el Aviso asociado.
-
-    - **aviso_id**: ID del aviso.
+    Requiere autenticación.
     """
     aviso_result = await db.execute(select(models.Aviso).where(models.Aviso.id == aviso_id))
-    if aviso_result.scalars().first() is None:
+    aviso_existente = aviso_result.scalars().first()
+    if aviso_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
+    
+    # Un analista normal solo puede ver los acuses de recibo de avisos que él creó
+    # o que están asociados a campañas en las que él participa.
+    # Por simplicidad, por ahora, si es analista normal, solo puede ver acuses de avisos que él creó.
+    if current_analista.role == UserRole.ANALISTA and aviso_existente.creador_id != current_analista.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver los acuses de recibo de este aviso.")
+
 
     query = select(models.AcuseReciboAviso).options(
-        selectinload(models.AcuseReciboAviso.analista), # Carga el objeto analista
-        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador),  # Carga aviso y su creador
-        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)   # Carga aviso y su campaña
+        selectinload(models.AcuseReciboAviso.analista),
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador),
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)
     ).where(models.AcuseReciboAviso.aviso_id == aviso_id)
 
     acuses = await db.execute(query)
     return acuses.scalars().unique().all()
 
-@app.get("/analistas/{analista_id}/acuses_recibo_avisos", response_model=List[AcuseReciboAviso], summary="Obtener acuses de recibo dados por un Analista")
+@app.get("/analistas/{analista_id}/acuses_recibo_avisos", response_model=List[AcuseReciboAviso], summary="Obtener acuses de recibo dados por un Analista (Protegido)")
 async def obtener_acuses_recibo_por_analista(
     analista_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista) # Requiere autenticación
 ):
     """
     Obtiene todos los acuses de recibo dados por un analista específico.
-    Carga también los detalles del Analista que acusó recibo y el Aviso asociado.
-
-    - **analista_id**: ID del analista.
+    Requiere autenticación. Un analista normal solo puede ver sus propios acuses de recibo.
     """
     analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
-    if analista_result.scalars().first() is None:
+    analista_existente = analista_result.scalars().first()
+    if analista_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+    
+    # Un analista normal solo puede ver sus propios acuses de recibo
+    if current_analista.role == UserRole.ANALISTA and analista_id != current_analista.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver los acuses de recibo de otro analista.")
+
 
     query = select(models.AcuseReciboAviso).options(
-        selectinload(models.AcuseReciboAviso.analista), # Carga el objeto analista
-        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador),  # Carga aviso y su creador
-        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)   # Carga aviso y su campaña
+        selectinload(models.AcuseReciboAviso.analista),
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador),
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)
     ).where(models.AcuseReciboAviso.analista_id == analista_id)
 
     acuses = await db.execute(query)
