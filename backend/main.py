@@ -18,6 +18,7 @@ from schemas.models import (
     ComentarioCampanaBase, ComentarioCampana,
     AvisoBase, Aviso,
     AcuseReciboAvisoBase, AcuseReciboAviso,
+    AcuseReciboCreate, # ¡NUEVO! Importamos el modelo para el cuerpo de la solicitud
     ProgresoTarea
 )
 
@@ -657,13 +658,14 @@ async def actualizar_aviso(
 
     # Validar si el creador o la campaña han cambiado y existen
     if aviso_update.creador_id != aviso_existente.creador_id:
-        nuevo_creador_result = await db.execute(select(models.Analista).filter(models.Analista.id == aviso_update.creador_id))
+        nuevo_creador_result = await db.execute(select(models.Analista).where(models.Analista.id == aviso_update.creador_id))
         if nuevo_creador_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nuevo Analista creador no encontrado para reasignar el Aviso.")
-    
+        aviso_existente.creador_id = aviso_update.creador_id
+
     # Manejar el caso de campana_id que puede ser None
     if aviso_update.campana_id is not None and aviso_update.campana_id != aviso_existente.campana_id:
-        nueva_campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == aviso_update.campana_id))
+        nueva_campana_result = await db.execute(select(models.Campana).where(models.Campana.id == aviso_update.campana_id))
         if nueva_campana_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Campaña no encontrada para reasignar el Aviso.")
         aviso_existente.campana_id = aviso_update.campana_id
@@ -718,25 +720,32 @@ async def eliminar_aviso(aviso_id: int, db: AsyncSession = Depends(get_db)):
 
 @app.post("/avisos/{aviso_id}/acuse_recibo", response_model=AcuseReciboAviso, status_code=status.HTTP_201_CREATED, summary="Registrar acuse de recibo para un Aviso")
 async def registrar_acuse_recibo(
-    aviso_id: int,
-    analista_id: int,
+    aviso_id: int, # Viene del path de la URL
+    acuse_data: AcuseReciboCreate, # ¡NUEVO! Viene del cuerpo de la solicitud
     db: AsyncSession = Depends(get_db)
 ):
     """
     Registra que un analista ha visto y acusado un aviso específico.
 
-    - **aviso_id**: ID del aviso al que se le da acuse de recibo.
-    - **analista_id**: ID del analista que da el acuse de recibo.
+    - **aviso_id**: ID del aviso al que se le da acuse de recibo (del path).
+    - **acuse_data**: Objeto AcuseReciboCreate con el ID del analista (del body).
     """
-    aviso_result = await db.execute(select(models.Aviso).where(models.Aviso.id == aviso_id))
-    aviso_existente = aviso_result.scalars().first()
-    if aviso_existente is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
+    analista_id = acuse_data.analista_id # Extraemos analista_id del objeto del cuerpo
 
     analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
     analista_existente = analista_result.scalars().first()
     if analista_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+
+    # Cargar el aviso con sus relaciones anidadas para el response_model
+    aviso_result = await db.execute(
+        select(models.Aviso)
+        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
+        .where(models.Aviso.id == aviso_id)
+    )
+    aviso_existente = aviso_result.scalars().first()
+    if aviso_existente is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
 
     existing_acuse_result = await db.execute(
         select(models.AcuseReciboAviso)
@@ -750,6 +759,18 @@ async def registrar_acuse_recibo(
     db.add(db_acuse)
     await db.commit()
     await db.refresh(db_acuse)
+
+    # Después de crear el acuse, recárgalo con sus relaciones para que el response_model la serialice correctamente.
+    # ¡NUEVO! Carga anidada para el aviso dentro del acuse
+    await db.execute(
+        select(models.AcuseReciboAviso)
+        .options(
+            selectinload(models.AcuseReciboAviso.analista),
+            selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador), # Carga creador del aviso
+            selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)  # Carga campaña del aviso
+        )
+        .filter(models.AcuseReciboAviso.id == db_acuse.id)
+    )
     return db_acuse
 
 @app.get("/avisos/{aviso_id}/acuses_recibo", response_model=List[AcuseReciboAviso], summary="Obtener acuses de recibo para un Aviso")
@@ -759,6 +780,7 @@ async def obtener_acuses_recibo_por_aviso(
 ):
     """
     Obtiene todos los acuses de recibo para un aviso específico.
+    Carga también los detalles del Analista que acusó recibo y el Aviso asociado.
 
     - **aviso_id**: ID del aviso.
     """
@@ -766,8 +788,14 @@ async def obtener_acuses_recibo_por_aviso(
     if aviso_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
 
-    acuses = await db.execute(select(models.AcuseReciboAviso).where(models.AcuseReciboAviso.aviso_id == aviso_id))
-    return acuses.scalars().all()
+    query = select(models.AcuseReciboAviso).options(
+        selectinload(models.AcuseReciboAviso.analista), # Carga el objeto analista
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador),  # Carga aviso y su creador
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)   # Carga aviso y su campaña
+    ).where(models.AcuseReciboAviso.aviso_id == aviso_id)
+
+    acuses = await db.execute(query)
+    return acuses.scalars().unique().all()
 
 @app.get("/analistas/{analista_id}/acuses_recibo_avisos", response_model=List[AcuseReciboAviso], summary="Obtener acuses de recibo dados por un Analista")
 async def obtener_acuses_recibo_por_analista(
@@ -776,6 +804,7 @@ async def obtener_acuses_recibo_por_analista(
 ):
     """
     Obtiene todos los acuses de recibo dados por un analista específico.
+    Carga también los detalles del Analista que acusó recibo y el Aviso asociado.
 
     - **analista_id**: ID del analista.
     """
@@ -783,5 +812,11 @@ async def obtener_acuses_recibo_por_analista(
     if analista_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
-    acuses = await db.execute(select(models.AcuseReciboAviso).where(models.AcuseReciboAviso.analista_id == analista_id))
-    return acuses.scalars().all()
+    query = select(models.AcuseReciboAviso).options(
+        selectinload(models.AcuseReciboAviso.analista), # Carga el objeto analista
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.creador),  # Carga aviso y su creador
+        selectinload(models.AcuseReciboAviso.aviso).selectinload(models.Aviso.campana)   # Carga aviso y su campaña
+    ).where(models.AcuseReciboAviso.analista_id == analista_id)
+
+    acuses = await db.execute(query)
+    return acuses.scalars().unique().all()

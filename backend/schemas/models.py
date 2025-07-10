@@ -56,8 +56,11 @@ class AvisoBase(BaseModel):
     creador_id: int
     campana_id: Optional[int] = None
 
-class AcuseReciboAvisoBase(BaseModel):
+class AcuseReciboAvisoBase(BaseModel): # Este es para la respuesta de la API (incluye aviso_id)
     aviso_id: int
+    analista_id: int
+
+class AcuseReciboCreate(BaseModel): # ¡NUEVO! Solo para el cuerpo de la solicitud POST
     analista_id: int
 
 # --- Modelos Completos (para respuesta de la API, incluyendo IDs y valores por defecto) ---
@@ -95,11 +98,13 @@ class ComentarioCampana(ComentarioCampanaBase):
 class Aviso(AvisoBase):
     id: int
     fecha_creacion: datetime
-    creador: Analista # ¡NUEVO! Anidamos el objeto Analista aquí
-    campana: Optional[Campana] = None # ¡NUEVO! Anidamos el objeto Campana aquí (opcional)
+    creador: Analista
+    campana: Optional[Campana] = None
     model_config = ConfigDict(from_attributes=True)
 
 class AcuseReciboAviso(AcuseReciboAvisoBase):
     id: int
     fecha_acuse: datetime
+    analista: Analista
+    aviso: Aviso
     model_config = ConfigDict(from_attributes=True)
