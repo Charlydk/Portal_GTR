@@ -401,7 +401,6 @@ async def crear_checklist_item(
     await db.refresh(db_item)
     return db_item
 
-# ¡NUEVO ENDPOINT! Para obtener un solo ítem de checklist por ID
 @app.get("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Obtener ChecklistItem por ID")
 async def obtener_checklist_item_por_id(item_id: int, db: AsyncSession = Depends(get_db)):
     """
@@ -492,11 +491,11 @@ async def crear_comentario_campana(
 
     - **comentario**: Objeto ComentarioCampanaBase con el contenido, y los IDs del analista y la campaña.
     """
-    analista_result = await db.execute(select(models.Analista).where(models.Analista.id == comentario.analista_id))
+    analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == comentario.analista_id))
     if analista_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
-    campana_result = await db.execute(select(models.Campana).where(models.Campana.id == comentario.campana_id))
+    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == comentario.campana_id))
     if campana_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 
@@ -504,7 +503,16 @@ async def crear_comentario_campana(
     db.add(db_comentario)
     await db.commit()
     await db.refresh(db_comentario)
+
+    # Después de crear el comentario, recárgalo con su relación de analista
+    # para que el response_model lo serialice correctamente.
+    await db.execute(
+        select(models.ComentarioCampana)
+        .options(selectinload(models.ComentarioCampana.analista))
+        .filter(models.ComentarioCampana.id == db_comentario.id)
+    )
     return db_comentario
+
 
 @app.get("/comentarios_campana/", response_model=List[ComentarioCampana], summary="Obtener Comentarios de Campaña (con filtros opcionales)")
 async def obtener_comentarios_campana(
@@ -514,18 +522,22 @@ async def obtener_comentarios_campana(
 ):
     """
     Obtiene todos los comentarios de campaña, o filtra por ID de campaña y/o ID de analista.
+    Carga también los detalles del Analista asociado a cada comentario.
 
     - **campana_id**: ID de la campaña para filtrar comentarios. (Opcional)
     - **analista_id**: ID del analista para filtrar comentarios. (Opcional)
     """
-    query = select(models.ComentarioCampana)
+    query = select(models.ComentarioCampana).options(
+        selectinload(models.ComentarioCampana.analista) # ¡NUEVO! Carga el objeto analista relacionado
+    )
     if campana_id:
         query = query.where(models.ComentarioCampana.campana_id == campana_id)
     if analista_id:
         query = query.where(models.ComentarioCampana.analista_id == analista_id)
 
     comentarios = await db.execute(query)
-    return comentarios.scalars().all()
+    return comentarios.scalars().unique().all() # .unique() es útil si usas múltiples selectinload y evitas duplicados
+
 
 @app.delete("/comentarios_campana/{comentario_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Comentario de Campaña")
 async def eliminar_comentario_campana(comentario_id: int, db: AsyncSession = Depends(get_db)):
