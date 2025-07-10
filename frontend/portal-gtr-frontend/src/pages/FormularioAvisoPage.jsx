@@ -1,144 +1,113 @@
 // src/pages/FormularioAvisoPage.jsx
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { API_BASE_URL } from '../api'; // Your API base URL
-import FormularioAviso from '../components/FormularioAviso'; // Import the presentational component
+import { API_BASE_URL } from '../api';
+import { useAuth } from '../context/AuthContext'; // Importa useAuth
 
 function FormularioAvisoPage() {
-  const { id } = useParams(); // Get ID if in edit mode
-  const navigate = useNavigate(); // For redirection after saving
-
-  const [loading, setLoading] = useState(true); // Loading state for edit mode
-  const [error, setError] = useState(null); // State for loading or submission errors
-  const [isSubmitting, setIsSubmitting] = useState(false); // State for form submission
-
-  const [analistas, setAnalistas] = useState([]); // List of analysts for dropdown
-  const [campanas, setCampanas] = useState([]);   // List of campaigns for dropdown
-
-  // Form data state
+  const { id } = useParams(); // Para saber si estamos editando
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     titulo: '',
     contenido: '',
-    fecha_vencimiento: '', // Format YYYY-MM-DDTHH:mm for datetime-local
+    fecha_vencimiento: '',
     creador_id: '',
-    campana_id: '' // Optional, can be empty string
+    campana_id: ''
   });
+  const [analistas, setAnalistas] = useState([]);
+  const [campanas, setCampanas] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { authToken } = useAuth(); // Obtiene authToken del contexto
 
-  // Effect to load notice data if in edit mode, and fetch analysts/campaigns
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Fetch analysts
-        const analistasResponse = await fetch(`${API_BASE_URL}/analistas/`);
-        if (!analistasResponse.ok) {
-          throw new Error(`Error al cargar analistas: ${analistasResponse.statusText}`);
-        }
-        const analistasData = await analistasResponse.json();
-        setAnalistas(analistasData);
+  const fetchDependencies = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Obtener analistas
+      const analistasResponse = await fetch(`${API_BASE_URL}/analistas/`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!analistasResponse.ok) throw new Error(`Error al cargar analistas: ${analistasResponse.statusText}`);
+      const analistasData = await analistasResponse.json();
+      setAnalistas(analistasData);
 
-        // Fetch campaigns
-        const campanasResponse = await fetch(`${API_BASE_URL}/campanas/`);
-        if (!campanasResponse.ok) {
-          throw new Error(`Error al cargar campañas: ${campanasResponse.statusText}`);
-        }
-        const campanasData = await campanasResponse.json();
-        setCampanas(campanasData);
+      // Obtener campañas
+      const campanasResponse = await fetch(`${API_BASE_URL}/campanas/`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!campanasResponse.ok) throw new Error(`Error al cargar campañas: ${campanasResponse.statusText}`);
+      const campanasData = await campanasResponse.json();
+      setCampanas(campanasData);
 
-        // If in edit mode (id is a number and not 'crear')
-        if (id && id !== 'crear') {
-          const avisoId = parseInt(id);
-          if (isNaN(avisoId)) {
-            throw new Error("ID de aviso inválido para edición.");
-          }
-          const avisoResponse = await fetch(`${API_BASE_URL}/avisos/${avisoId}`);
-          if (!avisoResponse.ok) {
-            if (avisoResponse.status === 404) {
-              throw new Error("Aviso no encontrado para edición.");
-            }
-            throw new Error(`Error al cargar el aviso para edición: ${avisoResponse.statusText}`);
-          }
-          const data = await avisoResponse.json();
-          
-          // Format dates for datetime-local input
-          const formatDateTimeForInput = (isoString) => {
-            if (!isoString) return '';
-            const dt = new Date(isoString);
-            const year = dt.getFullYear();
-            const month = (dt.getMonth() + 1).toString().padStart(2, '0');
-            const day = dt.getDate().toString().padStart(2, '0');
-            const hours = dt.getHours().toString().padStart(2, '0');
-            const minutes = dt.getMinutes().toString().padStart(2, '0');
-            return `${year}-${month}-${day}T${hours}:${minutes}`;
-          };
-
-          setFormData({
-            titulo: data.titulo,
-            contenido: data.contenido,
-            fecha_vencimiento: formatDateTimeForInput(data.fecha_vencimiento),
-            creador_id: data.creador_id,
-            campana_id: data.campana_id || '' // Ensure it's empty string if null
-          });
-        }
-      } catch (err) {
-        console.error("Error fetching data for FormularioAvisoPage:", err);
-        setError(err.message || "No se pudo cargar los datos necesarios para el formulario.");
-      } finally {
-        setLoading(false);
+      // Si estamos editando, cargar datos del aviso
+      if (id) {
+        const avisoResponse = await fetch(`${API_BASE_URL}/avisos/${id}`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!avisoResponse.ok) throw new Error(`Error al cargar el aviso: ${avisoResponse.statusText}`);
+        const avisoData = await avisoResponse.json();
+        setFormData({
+          titulo: avisoData.titulo,
+          contenido: avisoData.contenido || '',
+          fecha_vencimiento: avisoData.fecha_vencimiento ? new Date(avisoData.fecha_vencimiento).toISOString().slice(0, 16) : '',
+          creador_id: avisoData.creador_id.toString(),
+          campana_id: avisoData.campana_id ? avisoData.campana_id.toString() : '' // Puede ser opcional
+        });
       }
-    };
+    } catch (err) {
+      console.error("Error al cargar dependencias de aviso:", err);
+      setError(err.message || "No se pudieron cargar los datos necesarios.");
+    } finally {
+      setLoading(false);
+    }
+  }, [id, authToken]);
 
-    fetchData();
-  }, [id]);
+  useEffect(() => {
+    if (authToken) {
+      fetchDependencies();
+    } else {
+      setLoading(false);
+      setError("Necesita iniciar sesión para gestionar avisos.");
+    }
+  }, [authToken, fetchDependencies]);
 
-  // Handle form field changes
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prevState => ({
-      ...prevState,
+    setFormData(prev => ({
+      ...prev,
       [name]: value
     }));
   };
 
-  // Handle form submission
   const handleSubmit = async (e) => {
-    e.preventDefault(); // Prevent default form submission
-    setIsSubmitting(true); // Indicate submission started
-    setError(null);       // Clear previous errors
-
-    const method = (id && id !== 'crear') ? 'PUT' : 'POST'; // Determine HTTP method
-    const url = (id && id !== 'crear') ? `${API_BASE_URL}/avisos/${id}` : `${API_BASE_URL}/avisos/`;
-
-    // Prepare data for submission
-    const dataToSend = {
-      ...formData,
-      creador_id: parseInt(formData.creador_id), // Ensure creator_id is integer
-      campana_id: formData.campana_id ? parseInt(formData.campana_id) : null, // Ensure campaign_id is integer or null
-      fecha_vencimiento: formData.fecha_vencimiento ? new Date(formData.fecha_vencimiento).toISOString() : null,
-    };
-
-    // Remove empty fields for PUT requests to leverage FastAPI's exclude_unset
-    if (method === 'PUT') {
-      for (const key in dataToSend) {
-        if (dataToSend[key] === null || dataToSend[key] === '') {
-          delete dataToSend[key];
-        }
-      }
-    }
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
 
     try {
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `${API_BASE_URL}/avisos/${id}` : `${API_BASE_URL}/avisos/`;
+
+      const dataToSend = {
+        ...formData,
+        creador_id: parseInt(formData.creador_id),
+        campana_id: formData.campana_id ? parseInt(formData.campana_id) : null, // Puede ser null
+        fecha_vencimiento: formData.fecha_vencimiento ? new Date(formData.fecha_vencimiento).toISOString() : null,
+      };
+
       const response = await fetch(url, {
         method: method,
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`, // Envía el token
         },
-        body: JSON.stringify(dataToSend), // Send form data as JSON
+        body: JSON.stringify(dataToSend),
       });
 
       if (!response.ok) {
-        const errorData = await response.json(); // Try to read error message from backend
+        const errorData = await response.json();
         if (response.status === 422 && errorData.detail) {
           const validationErrors = errorData.detail.map(err => {
             const field = err.loc[err.loc.length - 1];
@@ -146,64 +115,137 @@ function FormularioAvisoPage() {
           }).join('\n');
           throw new Error(`Errores de validación:\n${validationErrors}`);
         }
-        throw new Error(errorData.detail || `Error al guardar el aviso: ${response.statusText}`);
+        throw new Error(errorData.detail || `Error al ${id ? 'actualizar' : 'crear'} aviso: ${response.statusText}`);
       }
 
-      const result = await response.json();
-      alert(`Aviso ${method === 'PUT' ? 'actualizado' : 'creado'} con éxito: ${result.titulo}`);
-      navigate('/avisos'); // Redirect to notices list after saving
+      alert(`Aviso ${id ? 'actualizado' : 'creado'} con éxito.`);
+      navigate('/avisos'); // Redirige a la lista de avisos
     } catch (err) {
-      console.error("Error al guardar el aviso:", err);
-      setError(err.message || "No se pudo guardar el aviso. Intente de nuevo.");
+      console.error(`Error al ${id ? 'actualizar' : 'crear'} aviso:`, err);
+      setError(err.message || `No se pudo ${id ? 'actualizar' : 'crear'} el aviso.`);
     } finally {
-      setIsSubmitting(false); // Indicate submission finished
+      setIsSubmitting(false);
     }
   };
 
-  // Conditional rendering for loading state
   if (loading) {
     return (
       <div className="container mt-4 text-center">
         <div className="spinner-border text-primary" role="status">
           <span className="visually-hidden">Cargando formulario...</span>
         </div>
-        <p>Cargando datos necesarios para el aviso...</p>
+        <p>Cargando información del aviso...</p>
       </div>
     );
   }
 
-  // Conditional rendering for errors
-  if (error && !isSubmitting) {
+  if (error) {
     return (
       <div className="container mt-4">
         <div className="alert alert-danger" role="alert">
           {error}
         </div>
-        <Link to="/avisos" className="btn btn-secondary mt-3">Volver a Avisos</Link>
+        {!authToken && (
+          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
+        )}
+        <button onClick={() => navigate('/avisos')} className="btn btn-secondary mt-3">Volver a Avisos</button>
       </div>
     );
   }
 
-  const isEditMode = !!id && id !== 'crear';
-
   return (
     <div className="container mt-4">
-      <h3>{isEditMode ? 'Editar Aviso' : 'Crear Nuevo Aviso'}</h3>
-      <hr />
-      {error && isSubmitting && ( // Show error if there was a submission problem
+      <h2 className="mb-4">{id ? 'Editar Aviso' : 'Crear Nuevo Aviso'}</h2>
+      {error && (
         <div className="alert alert-danger" role="alert">
           {error}
         </div>
       )}
-      <FormularioAviso
-        formData={formData}
-        handleChange={handleChange}
-        handleSubmit={handleSubmit}
-        isSubmitting={isSubmitting}
-        isEditMode={isEditMode}
-        analistas={analistas}
-        campanas={campanas}
-      />
+      <form onSubmit={handleSubmit}>
+        <div className="mb-3">
+          <label htmlFor="tituloInput" className="form-label">Título:</label>
+          <input
+            type="text"
+            className="form-control rounded-md"
+            id="tituloInput"
+            name="titulo"
+            value={formData.titulo}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="mb-3">
+          <label htmlFor="contenidoInput" className="form-label">Contenido:</label>
+          <textarea
+            className="form-control rounded-md"
+            id="contenidoInput"
+            name="contenido"
+            value={formData.contenido}
+            onChange={handleChange}
+            rows="5"
+            required
+            disabled={isSubmitting}
+          ></textarea>
+        </div>
+        <div className="mb-3">
+          <label htmlFor="fechaVencimientoInput" className="form-label">Fecha de Vencimiento (Opcional):</label>
+          <input
+            type="datetime-local"
+            className="form-control rounded-md"
+            id="fechaVencimientoInput"
+            name="fecha_vencimiento"
+            value={formData.fecha_vencimiento}
+            onChange={handleChange}
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="mb-3">
+          <label htmlFor="creadorSelect" className="form-label">Creador:</label>
+          <select
+            className="form-select rounded-md"
+            id="creadorSelect"
+            name="creador_id"
+            value={formData.creador_id}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          >
+            <option value="">Seleccione un creador</option>
+            {analistas.map(analista => (
+              <option key={analista.id} value={analista.id}>
+                {analista.nombre} {analista.apellido} (BMS ID: {analista.bms_id})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mb-3">
+          <label htmlFor="campanaSelect" className="form-label">Campaña Asociada (Opcional):</label>
+          <select
+            className="form-select rounded-md"
+            id="campanaSelect"
+            name="campana_id"
+            value={formData.campana_id}
+            onChange={handleChange}
+            disabled={isSubmitting}
+          >
+            <option value="">Ninguna</option>
+            {campanas.map(campana => (
+              <option key={campana.id} value={campana.id}>
+                {campana.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="d-grid gap-2">
+          <button type="submit" className="btn btn-primary rounded-md" disabled={isSubmitting}>
+            {isSubmitting ? 'Guardando...' : (id ? 'Actualizar Aviso' : 'Crear Aviso')}
+          </button>
+          <button type="button" onClick={() => navigate('/avisos')} className="btn btn-secondary rounded-md">
+            Cancelar
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

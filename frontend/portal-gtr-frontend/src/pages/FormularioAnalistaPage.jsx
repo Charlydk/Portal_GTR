@@ -1,150 +1,275 @@
 // src/pages/FormularioAnalistaPage.jsx
-
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom'; // Asegúrate de importar Link
-import { API_BASE_URL } from '../api'; // Tu URL base de la API
-import FormularioAnalista from '../components/FormularioAnalista'; // Importamos el componente presentacional
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { API_BASE_URL } from '../api';
+import { useAuth } from '../context/AuthContext'; // ¡NUEVO! Importa useAuth
 
 function FormularioAnalistaPage() {
-  const { id } = useParams(); // Obtiene el ID si estamos en modo edición
-  const navigate = useNavigate(); // Para redirigir después de guardar
-  
-  const [analista, setAnalista] = useState(null); // Para cargar datos si estamos editando
-  const [loading, setLoading] = useState(true); // Estado de carga para la edición
-  const [error, setError] = useState(null); // Estado para errores de carga o envío
-  const [isSubmitting, setIsSubmitting] = useState(false); // Estado para el envío del formulario
-
-  // Estado para los datos del formulario (para crear o editar)
+  const { id } = useParams(); // Para saber si estamos editando
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     nombre: '',
     apellido: '',
     email: '',
-    bms_id: ''
+    bms_id: '',
+    password: '', // Solo para el registro, no para la actualización de datos generales
+    role: 'ANALISTA' // Valor por defecto para nuevos registros
   });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { authToken, user } = useAuth(); // Obtiene authToken y user del contexto
 
-  // Efecto para cargar datos del analista si estamos editando
+  // Efecto para cargar los datos del analista si estamos editando
   useEffect(() => {
-    // Si hay un ID en la URL Y NO es "crear", entonces intentamos cargar el analista para edición
-    if (id && id !== 'crear') { 
-      const fetchAnalista = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-          const analistaId = parseInt(id);
-          if (isNaN(analistaId)) {
-            throw new Error("ID de analista inválido para edición."); 
-          }
-          const response = await fetch(`${API_BASE_URL}/analistas/${analistaId}`);
-          if (!response.ok) {
-            if (response.status === 404) {
-              throw new Error("Analista no encontrado para edición.");
-            }
-            throw new Error(`Error al cargar el analista para edición: ${response.statusText}`);
-          }
-          const data = await response.json();
-          setAnalista(data); // Guarda el analista original
-          setFormData({ // Carga los datos en el formulario
-            nombre: data.nombre,
-            apellido: data.apellido,
-            email: data.email,
-            bms_id: data.bms_id || '' // Asegura que bms_id no sea undefined
-          });
-        } catch (err) {
-          console.error("Error al cargar el analista para edición:", err);
-          setError(err.message || "No se pudo cargar el analista para edición.");
-        } finally {
-          setLoading(false);
+    const fetchAnalista = async () => {
+      if (!id) { // Si no hay ID, es una creación, no necesitamos cargar datos
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${API_BASE_URL}/analistas/${id}`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`, // Envía el token para la carga
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`Error al cargar el analista: ${response.statusText}`);
         }
-      };
-      fetchAnalista();
-    } else { // Si no hay ID o el ID es "crear", estamos creando uno nuevo
-      setLoading(false); // No hay nada que cargar
-    }
-  }, [id]);
+        const data = await response.json();
+        setFormData({
+          nombre: data.nombre,
+          apellido: data.apellido,
+          email: data.email,
+          bms_id: data.bms_id,
+          password: '', // No cargamos la contraseña por seguridad
+          role: data.role
+        });
+      } catch (err) {
+        console.error("Error al cargar el analista:", err);
+        setError(err.message || "No se pudo cargar la información del analista.");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  // Manejador de cambios en los campos del formulario
+    if (authToken) { // Solo intenta cargar si hay token
+      fetchAnalista();
+    } else {
+      setLoading(false);
+      setError("Necesita iniciar sesión para gestionar analistas.");
+    }
+  }, [id, authToken]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prevState => ({
-      ...prevState,
+    setFormData(prev => ({
+      ...prev,
       [name]: value
     }));
   };
 
-  // Manejador de envío del formulario
   const handleSubmit = async (e) => {
-    e.preventDefault(); // Previene el comportamiento por defecto del formulario (recargar la página)
-    setIsSubmitting(true); // Indicamos que el envío ha comenzado
-    setError(null);       // Limpiamos errores previos
-
-    const method = (id && id !== 'crear') ? 'PUT' : 'POST'; // Si hay ID y NO es 'crear', es PUT (editar), si no, es POST (crear)
-    const url = (id && id !== 'crear') ? `${API_BASE_URL}/analistas/${id}` : `${API_BASE_URL}/analistas/`;
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
 
     try {
+      let method;
+      let url;
+      let dataToSend;
+
+      if (id) { // Modo edición
+        method = 'PUT';
+        url = `${API_BASE_URL}/analistas/${id}`;
+        dataToSend = {
+          nombre: formData.nombre,
+          apellido: formData.apellido,
+          email: formData.email,
+          bms_id: parseInt(formData.bms_id),
+          role: formData.role // Permitimos actualizar el rol en edición
+        };
+      } else { // Modo creación (registro)
+        method = 'POST';
+        url = `${API_BASE_URL}/analistas/`; // El endpoint /analistas/ es para crear (protegido)
+        dataToSend = {
+          nombre: formData.nombre,
+          apellido: formData.apellido,
+          email: formData.email,
+          bms_id: parseInt(formData.bms_id),
+          password: formData.password,
+          role: formData.role
+        };
+      }
+
       const response = await fetch(url, {
         method: method,
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`, // ¡IMPORTANTE! Envía el token de autenticación
         },
-        body: JSON.stringify(formData), // Envía los datos del formulario en formato JSON
+        body: JSON.stringify(dataToSend),
       });
 
       if (!response.ok) {
-        const errorData = await response.json(); // Intenta leer el mensaje de error del backend
-        throw new Error(errorData.detail || `Error al guardar el analista: ${response.statusText}`);
+        const errorData = await response.json();
+        if (response.status === 422 && errorData.detail) {
+          const validationErrors = errorData.detail.map(err => {
+            const field = err.loc[err.loc.length - 1];
+            return `${field}: ${err.msg}`;
+          }).join('\n');
+          throw new Error(`Errores de validación:\n${validationErrors}`);
+        }
+        throw new Error(errorData.detail || `Error al ${id ? 'actualizar' : 'crear'} analista: ${response.statusText}`);
       }
 
-      const result = await response.json();
-      alert(`Analista ${method === 'PUT' ? 'actualizado' : 'creado'} con éxito: ${result.nombre}`);
-      navigate('/analistas'); // Redirige a la lista de analistas después de guardar
+      alert(`Analista ${id ? 'actualizado' : 'creado'} con éxito.`);
+      navigate('/analistas'); // Redirige a la lista de analistas
     } catch (err) {
-      console.error("Error al guardar el analista:", err);
-      setError(err.message || "No se pudo guardar el analista. Intente de nuevo.");
+      console.error(`Error al ${id ? 'actualizar' : 'crear'} analista:`, err);
+      setError(err.message || `No se pudo ${id ? 'actualizar' : 'crear'} el analista.`);
     } finally {
-      setIsSubmitting(false); // Indicamos que el envío ha finalizado
+      setIsSubmitting(false);
     }
   };
 
-  // Renderizado condicional para el estado de carga (solo si estamos cargando un analista existente)
-  if (loading && (id && id !== 'crear')) { 
+  // Determinar si el campo de contraseña debe ser visible
+  const showPasswordField = !id; // Solo mostrar en modo creación
+  // Determinar si el campo de rol debe ser editable
+  const isRoleEditable = user && user.role === 'SUPERVISOR'; // Solo supervisor puede cambiar el rol
+
+  if (loading) {
     return (
       <div className="container mt-4 text-center">
         <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Cargando analista...</span>
+          <span className="visually-hidden">Cargando formulario...</span>
         </div>
-        <p>Cargando datos del analista para edición...</p>
+        <p>Cargando información del analista...</p>
       </div>
     );
   }
 
-  // Renderizado condicional para errores de carga o envío
-  if (error && !isSubmitting) { 
+  if (error) {
     return (
       <div className="container mt-4">
         <div className="alert alert-danger" role="alert">
           {error}
         </div>
-        <Link to="/analistas" className="btn btn-secondary mt-3">Volver a Analistas</Link>
+        {!authToken && (
+          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
+        )}
+        <button onClick={() => navigate('/analistas')} className="btn btn-secondary mt-3">Volver a Analistas</button>
       </div>
     );
   }
 
   return (
     <div className="container mt-4">
-      <h3>{ (id && id !== 'crear') ? 'Editar Analista' : 'Crear Nuevo Analista'}</h3> 
-      <hr />
-      {error && isSubmitting && ( // Muestra error si hubo un problema al enviar el formulario
+      <h2 className="mb-4">{id ? 'Editar Analista' : 'Crear Nuevo Analista'}</h2>
+      {error && (
         <div className="alert alert-danger" role="alert">
           {error}
         </div>
       )}
-      <FormularioAnalista
-        formData={formData}
-        handleChange={handleChange}
-        handleSubmit={handleSubmit}
-        isSubmitting={isSubmitting}
-        isEditMode={!!id && id !== 'crear'} // Le indicamos al componente presentacional si es modo edición
-      />
+      <form onSubmit={handleSubmit}>
+        <div className="mb-3">
+          <label htmlFor="nombreInput" className="form-label">Nombre:</label>
+          <input
+            type="text"
+            className="form-control rounded-md"
+            id="nombreInput"
+            name="nombre"
+            value={formData.nombre}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="mb-3">
+          <label htmlFor="apellidoInput" className="form-label">Apellido:</label>
+          <input
+            type="text"
+            className="form-control rounded-md"
+            id="apellidoInput"
+            name="apellido"
+            value={formData.apellido}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="mb-3">
+          <label htmlFor="emailInput" className="form-label">Email:</label>
+          <input
+            type="email"
+            className="form-control rounded-md"
+            id="emailInput"
+            name="email"
+            value={formData.email}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="mb-3">
+          <label htmlFor="bmsIdInput" className="form-label">BMS ID:</label>
+          <input
+            type="number"
+            className="form-control rounded-md"
+            id="bmsIdInput"
+            name="bms_id"
+            value={formData.bms_id}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          />
+        </div>
+        {showPasswordField && (
+          <div className="mb-3">
+            <label htmlFor="passwordInput" className="form-label">Contraseña:</label>
+            <input
+              type="password"
+              className="form-control rounded-md"
+              id="passwordInput"
+              name="password"
+              value={formData.password}
+              onChange={handleChange}
+              required
+              minLength="6"
+              disabled={isSubmitting}
+            />
+          </div>
+        )}
+        <div className="mb-3">
+          <label htmlFor="roleSelect" className="form-label">Rol:</label>
+          <select
+            className="form-select rounded-md"
+            id="roleSelect"
+            name="role"
+            value={formData.role}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting || !isRoleEditable} // Deshabilita si no es editable
+          >
+            <option value="ANALISTA">Analista</option>
+            <option value="RESPONSABLE">Responsable</option>
+            <option value="SUPERVISOR">Supervisor</option>
+          </select>
+          {!isRoleEditable && id && (
+            <small className="form-text text-muted">Solo un Supervisor puede cambiar el rol de un analista existente.</small>
+          )}
+        </div>
+        <div className="d-grid gap-2">
+          <button type="submit" className="btn btn-primary rounded-md" disabled={isSubmitting}>
+            {isSubmitting ? 'Guardando...' : (id ? 'Actualizar Analista' : 'Crear Analista')}
+          </button>
+          <button type="button" onClick={() => navigate('/analistas')} className="btn btn-secondary rounded-md">
+            Cancelar
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

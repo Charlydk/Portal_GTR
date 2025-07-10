@@ -79,6 +79,7 @@ class Analista(AnalistaBase):
     id: int
     fecha_creacion: datetime
     esta_activo: bool
+    hashed_password: str # Necesario para que el modelo Analista devuelto por /users/me/ tenga este campo
     model_config = ConfigDict(from_attributes=True)
 
 class Campana(CampanaBase):
@@ -91,6 +92,7 @@ class Tarea(TareaBase):
     fecha_creacion: datetime
     analista: Analista
     campana: Campana
+    checklist_items: List["ChecklistItem"] = [] # ¡DESCOMENTADA ESTA LÍNEA!
     model_config = ConfigDict(from_attributes=True)
 
 class ChecklistItem(ChecklistItemBase):
@@ -107,7 +109,7 @@ class ComentarioCampana(ComentarioCampanaBase):
 class Aviso(AvisoBase):
     id: int
     fecha_creacion: datetime
-    creador: Analista
+    creador: Analista # Asegúrate de que el creador se carga
     campana: Optional[Campana] = None
     model_config = ConfigDict(from_attributes=True)
 
