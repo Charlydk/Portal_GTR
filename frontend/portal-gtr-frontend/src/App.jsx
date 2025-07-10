@@ -9,7 +9,6 @@ import './App.css';
 
 import Navbar from './components/Navbar';
 import HomePage from './pages/HomePage';
-import AvisosPage from './pages/AvisosPage';
 
 // Importaciones de Analistas
 import AnalistasPage from './pages/AnalistasPage';
@@ -26,8 +25,13 @@ import TareasPage from './pages/TareasPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import FormularioTareaPage from './pages/FormularioTareaPage';
 
-// Importaciones de Checklist Items (¡NUEVAS!)
+// Importaciones de Checklist Items
 import FormularioChecklistItemPage from './pages/FormularioChecklistItemPage';
+
+// Importaciones de Avisos (¡NUEVAS!)
+import AvisosPage from './pages/AvisosPage'; // La página que lista avisos
+import DetalleAvisoPage from './pages/DetalleAvisoPage'; // Para ver el detalle de un aviso
+import FormularioAvisoPage from './pages/FormularioAvisoPage'; // Para crear y editar avisos
 
 
 function App() {
@@ -50,14 +54,15 @@ function App() {
           <Route path="/tareas/:id" element={<DetalleTareaPage />} />
           <Route path="/tareas" element={<TareasPage />} />
           
-          {/* Rutas de Checklist Items (¡ANIDADAS BAJO TAREAS!) */}
-          {/* La ruta de creación necesita el ID de la tarea para saber a qué tarea pertenece el ítem */}
+          {/* Rutas de Checklist Items */}
           <Route path="/tareas/:tareaId/checklist-items/crear" element={<FormularioChecklistItemPage />} />
-          {/* La ruta de edición necesita el ID del ítem y el ID de la tarea para el "Cancelar" */}
           <Route path="/tareas/:tareaId/checklist-items/editar/:id" element={<FormularioChecklistItemPage />} />
 
-          {/* Rutas de Avisos */}
-          <Route path="/avisos" element={<AvisosPage />} />
+          {/* RUTAS DE AVISOS - ¡El orden es crítico aquí! */}
+          <Route path="/avisos/crear" element={<FormularioAvisoPage />} /> {/* Para crear un nuevo aviso */}
+          <Route path="/avisos/editar/:id" element={<FormularioAvisoPage />} /> {/* Para editar un aviso existente */}
+          <Route path="/avisos/:id" element={<DetalleAvisoPage />} /> {/* Para ver el detalle de un aviso */}
+          <Route path="/avisos" element={<AvisosPage />} /> {/* Lista general de avisos */}
           
           {/* Rutas de Analistas */}
           <Route path="/analistas/crear" element={<FormularioAnalistaPage />} />

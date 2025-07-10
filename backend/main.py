@@ -583,6 +583,14 @@ async def crear_aviso(
     db.add(db_aviso)
     await db.commit()
     await db.refresh(db_aviso)
+
+    # Después de crear el aviso, recárgalo con sus relaciones para que el response_model la serialice correctamente.
+    # Esto es crucial para que los campos 'creador' y 'campana' del Pydantic Aviso se llenen.
+    await db.execute(
+        select(models.Aviso)
+        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
+        .filter(models.Aviso.id == db_aviso.id)
+    )
     return db_aviso
 
 @app.get("/avisos/", response_model=List[Aviso], summary="Obtener Avisos (con filtros opcionales)")
@@ -593,18 +601,41 @@ async def obtener_avisos(
 ):
     """
     Obtiene todos los avisos, o filtra por ID del creador (analista) y/o ID de campaña.
+    Carga también los detalles del Creador y la Campaña asociada a cada aviso.
 
     - **creador_id**: ID del analista que creó el aviso para filtrar. (Opcional)
     - **campana_id**: ID de la campaña asociada al aviso para filtrar. (Opcional)
     """
-    query = select(models.Aviso)
+    query = select(models.Aviso).options(
+        selectinload(models.Aviso.creador), # ¡NUEVO! Carga el objeto analista creador
+        selectinload(models.Aviso.campana)  # ¡NUEVO! Carga el objeto campaña asociada
+    )
     if creador_id:
         query = query.where(models.Aviso.creador_id == creador_id)
     if campana_id:
         query = query.where(models.Aviso.campana_id == campana_id)
 
     avisos = await db.execute(query)
-    return avisos.scalars().all()
+    return avisos.scalars().unique().all()
+
+
+@app.get("/avisos/{aviso_id}", response_model=Aviso, summary="Obtener Aviso por ID")
+async def obtener_aviso_por_id(aviso_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Obtiene un aviso específico por su ID desde la base de datos, incluyendo detalles del Creador y Campaña.
+    """
+    result = await db.execute(
+        select(models.Aviso)
+        .filter(models.Aviso.id == aviso_id)
+        .options(
+            selectinload(models.Aviso.creador), # ¡NUEVO! Carga el objeto analista creador
+            selectinload(models.Aviso.campana)  # ¡NUEVO! Carga el objeto campaña asociada
+        )
+    )
+    aviso = result.scalars().first()
+    if not aviso:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
+    return aviso
 
 @app.put("/avisos/{aviso_id}", response_model=Aviso, summary="Actualizar un Aviso existente")
 async def actualizar_aviso(
@@ -624,27 +655,46 @@ async def actualizar_aviso(
     if aviso_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
 
+    # Validar si el creador o la campaña han cambiado y existen
     if aviso_update.creador_id != aviso_existente.creador_id:
-        nuevo_creador_result = await db.execute(select(models.Analista).where(models.Analista.id == aviso_update.creador_id))
+        nuevo_creador_result = await db.execute(select(models.Analista).filter(models.Analista.id == aviso_update.creador_id))
         if nuevo_creador_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nuevo Analista creador no encontrado para reasignar el Aviso.")
-        aviso_existente.creador_id = aviso_update.creador_id
-
-    if aviso_update.campana_id != aviso_existente.campana_id:
-        if aviso_update.campana_id: # Solo validar si campana_id no es None
-            nueva_campana_result = await db.execute(select(models.Campana).where(models.Campana.id == aviso_update.campana_id))
-            if nueva_campana_result.scalars().first() is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Campaña no encontrada para reasignar el Aviso.")
+    
+    # Manejar el caso de campana_id que puede ser None
+    if aviso_update.campana_id is not None and aviso_update.campana_id != aviso_existente.campana_id:
+        nueva_campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == aviso_update.campana_id))
+        if nueva_campana_result.scalars().first() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Campaña no encontrada para reasignar el Aviso.")
         aviso_existente.campana_id = aviso_update.campana_id
+    elif aviso_update.campana_id is None and aviso_existente.campana_id is not None:
+        # Si se cambia de una campaña a ninguna
+        aviso_existente.campana_id = None
+
 
     # Actualizar los campos
     aviso_data = aviso_update.model_dump(exclude_unset=True)
     for key, value in aviso_data.items():
-        setattr(aviso_existente, key, value)
+        # Excluir creador_id y campana_id si ya los manejamos explícitamente
+        if key not in ['creador_id', 'campana_id']:
+            setattr(aviso_existente, key, value)
 
     await db.commit()
-    await db.refresh(aviso_existente)
-    return aviso_existente
+    await db.refresh(aviso_existente) # Refresca los atributos directos
+
+    # Después de actualizar, recarga el aviso con sus relaciones para el response_model
+    updated_aviso_result = await db.execute(
+        select(models.Aviso)
+        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
+        .filter(models.Aviso.id == aviso_id)
+    )
+    updated_aviso = updated_aviso_result.scalars().first()
+    if not updated_aviso:
+        # Esto no debería pasar si aviso_existente no era None, pero es una buena práctica defensiva
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el aviso después de la actualización.")
+    
+    return updated_aviso
+
 
 @app.delete("/avisos/{aviso_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Aviso")
 async def eliminar_aviso(aviso_id: int, db: AsyncSession = Depends(get_db)):

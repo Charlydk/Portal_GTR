@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr, ConfigDict # Importamos ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from datetime import datetime, date
 from typing import Optional, List
 from enum import Enum
@@ -33,7 +33,7 @@ class CampanaBase(BaseModel):
 class TareaBase(BaseModel):
     titulo: str = Field(..., min_length=5, max_length=200)
     descripcion: Optional[str] = None
-    fecha_vencimiento: Optional[datetime] = None # Usamos datetime para consistencia con tu DB
+    fecha_vencimiento: Optional[datetime] = None
     progreso: ProgresoTarea = ProgresoTarea.PENDIENTE
 
     analista_id: int
@@ -89,13 +89,14 @@ class ChecklistItem(ChecklistItemBase):
 class ComentarioCampana(ComentarioCampanaBase):
     id: int
     fecha_creacion: datetime
-    analista: Analista # ¡NUEVO! Anidamos el objeto Analista aquí
-    # campana: Campana # Puedes anidar la campaña si lo necesitas en el futuro
+    analista: Analista
     model_config = ConfigDict(from_attributes=True)
 
 class Aviso(AvisoBase):
     id: int
     fecha_creacion: datetime
+    creador: Analista # ¡NUEVO! Anidamos el objeto Analista aquí
+    campana: Optional[Campana] = None # ¡NUEVO! Anidamos el objeto Campana aquí (opcional)
     model_config = ConfigDict(from_attributes=True)
 
 class AcuseReciboAviso(AcuseReciboAvisoBase):
