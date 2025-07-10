@@ -1,188 +1,213 @@
 // src/pages/FormularioCampanaPage.jsx
-
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { API_BASE_URL } from '../api'; // Tu URL base de la API
-import FormularioCampana from '../components/FormularioCampana'; // Importamos el componente presentacional
+import { useParams, useNavigate } from 'react-router-dom';
+import { API_BASE_URL } from '../api';
+import { useAuth } from '../context/AuthContext'; // Importa useAuth
 
 function FormularioCampanaPage() {
-  const { id } = useParams(); // Obtiene el ID si estamos en modo edición
-  const navigate = useNavigate(); // Para redirigir después de guardar
-
-  const [loading, setLoading] = useState(true); // Estado de carga para la edición
-  const [error, setError] = useState(null); // Estado para errores de carga o envío
-  const [isSubmitting, setIsSubmitting] = useState(false); // Estado para el envío del formulario
-
-  // Estado para los datos del formulario (para crear o editar)
+  const { id } = useParams(); // Para saber si estamos editando
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     nombre: '',
     descripcion: '',
-    fecha_inicio: '', // Formato YYYY-MM-DDTHH:mm para datetime-local
-    fecha_fin: ''     // Formato YYYY-MM-DDTHH:mm para datetime-local
+    fecha_inicio: '',
+    fecha_fin: ''
   });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { authToken } = useAuth(); // Obtiene authToken del contexto
 
-  // Efecto para cargar datos de la campaña si estamos editando
+  // Efecto para cargar los datos de la campaña si estamos editando
   useEffect(() => {
-    // Si hay un ID en la URL Y NO es "crear", entonces intentamos cargar la campaña para edición
-    if (id && id !== 'crear') { 
-      const fetchCampana = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-          const campanaId = parseInt(id);
-          if (isNaN(campanaId)) {
-            throw new Error("ID de campaña inválido para edición."); 
-          }
-          const response = await fetch(`${API_BASE_URL}/campanas/${campanaId}`);
-          if (!response.ok) {
-            if (response.status === 404) {
-              throw new Error("Campaña no encontrada para edición.");
-            }
-            throw new Error(`Error al cargar la campaña para edición: ${response.statusText}`);
-          }
-          const data = await response.json();
-          
-          // Formatear las fechas para el input datetime-local
-          // La API devuelve ISO 8601 (ej. "2023-10-26T10:00:00.000Z")
-          // El input datetime-local espera "YYYY-MM-DDTHH:mm"
-          const formatDateTimeForInput = (isoString) => {
-            if (!isoString) return '';
-            const dt = new Date(isoString);
-            // Asegurarse de que los componentes de la fecha y hora tengan dos dígitos
-            const year = dt.getFullYear();
-            const month = (dt.getMonth() + 1).toString().padStart(2, '0');
-            const day = dt.getDate().toString().padStart(2, '0');
-            const hours = dt.getHours().toString().padStart(2, '0');
-            const minutes = dt.getMinutes().toString().padStart(2, '0');
-            return `${year}-${month}-${day}T${hours}:${minutes}`;
-          };
-
-          setFormData({
-            nombre: data.nombre,
-            descripcion: data.descripcion || '',
-            fecha_inicio: formatDateTimeForInput(data.fecha_inicio),
-            fecha_fin: formatDateTimeForInput(data.fecha_fin)
-          });
-        } catch (err) {
-          console.error("Error al cargar la campaña para edición:", err);
-          setError(err.message || "No se pudo cargar la campaña para edición.");
-        } finally {
-          setLoading(false);
+    const fetchCampana = async () => {
+      if (!id) { // Si no hay ID, es una creación, no necesitamos cargar datos
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`${API_BASE_URL}/campanas/${id}`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`, // Envía el token
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`Error al cargar la campaña: ${response.statusText}`);
         }
-      };
-      fetchCampana();
-    } else { // Si no hay ID o el ID es "crear", estamos creando una nueva
-      setLoading(false); // No hay nada que cargar
-    }
-  }, [id]);
+        const data = await response.json();
+        setFormData({
+          nombre: data.nombre,
+          descripcion: data.descripcion || '',
+          // Formatear fechas para los inputs de tipo datetime-local
+          fecha_inicio: data.fecha_inicio ? new Date(data.fecha_inicio).toISOString().slice(0, 16) : '',
+          fecha_fin: data.fecha_fin ? new Date(data.fecha_fin).toISOString().slice(0, 16) : ''
+        });
+      } catch (err) {
+        console.error("Error al cargar la campaña:", err);
+        setError(err.message || "No se pudo cargar la información de la campaña.");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  // Manejador de cambios en los campos del formulario
+    if (authToken) { // Solo intenta cargar si hay token
+      fetchCampana();
+    } else {
+      setLoading(false);
+      setError("Necesita iniciar sesión para gestionar campañas.");
+    }
+  }, [id, authToken]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prevState => ({
-      ...prevState,
+    setFormData(prev => ({
+      ...prev,
       [name]: value
     }));
   };
 
-  // Manejador de envío del formulario
   const handleSubmit = async (e) => {
-    e.preventDefault(); // Previene el comportamiento por defecto del formulario (recargar la página)
-    setIsSubmitting(true); // Indicamos que el envío ha comenzado
-    setError(null);       // Limpiamos errores previos
-
-    const method = (id && id !== 'crear') ? 'PUT' : 'POST'; // Si hay ID y NO es 'crear', es PUT (editar), si no, es POST (crear)
-    const url = (id && id !== 'crear') ? `${API_BASE_URL}/campanas/${id}` : `${API_BASE_URL}/campanas/`;
-
-    // Preparar los datos para el envío
-    // Asegurarse de que las fechas sean objetos Date válidos o null
-    const dataToSend = {
-      ...formData,
-      fecha_inicio: formData.fecha_inicio ? new Date(formData.fecha_inicio).toISOString() : null,
-      fecha_fin: formData.fecha_fin ? new Date(formData.fecha_fin).toISOString() : null,
-    };
-
-    // Eliminar campos vacíos si es PUT para que model_dump(exclude_unset=True) funcione en FastAPI
-    // Esto es importante para que FastAPI solo actualice los campos que realmente se modificaron
-    if (method === 'PUT') {
-      for (const key in dataToSend) {
-        if (dataToSend[key] === null || dataToSend[key] === '') {
-          delete dataToSend[key];
-        }
-      }
-    }
-    
-    // Si fecha_fin es una cadena vacía, asegúrate de que sea null para la API
-    if (dataToSend.fecha_fin === '') {
-      dataToSend.fecha_fin = null;
-    }
-
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
 
     try {
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `${API_BASE_URL}/campanas/${id}` : `${API_BASE_URL}/campanas/`;
+
+      const dataToSend = {
+        ...formData,
+        // Convertir fechas de string a objetos Date si no están vacías
+        fecha_inicio: formData.fecha_inicio ? new Date(formData.fecha_inicio).toISOString() : null,
+        fecha_fin: formData.fecha_fin ? new Date(formData.fecha_fin).toISOString() : null,
+      };
+
       const response = await fetch(url, {
         method: method,
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`, // Envía el token
         },
-        body: JSON.stringify(dataToSend), // Envía los datos del formulario en formato JSON
+        body: JSON.stringify(dataToSend),
       });
 
       if (!response.ok) {
-        const errorData = await response.json(); // Intenta leer el mensaje de error del backend
-        throw new Error(errorData.detail || `Error al guardar la campaña: ${response.statusText}`);
+        const errorData = await response.json();
+        if (response.status === 422 && errorData.detail) {
+          const validationErrors = errorData.detail.map(err => {
+            const field = err.loc[err.loc.length - 1];
+            return `${field}: ${err.msg}`;
+          }).join('\n');
+          throw new Error(`Errores de validación:\n${validationErrors}`);
+        }
+        throw new Error(errorData.detail || `Error al ${id ? 'actualizar' : 'crear'} campaña: ${response.statusText}`);
       }
 
-      const result = await response.json();
-      alert(`Campaña ${method === 'PUT' ? 'actualizada' : 'creada'} con éxito: ${result.nombre}`);
-      navigate('/campanas'); // Redirige a la lista de campañas después de guardar
+      alert(`Campaña ${id ? 'actualizada' : 'creada'} con éxito.`);
+      navigate('/campanas'); // Redirige a la lista de campañas
     } catch (err) {
-      console.error("Error al guardar la campaña:", err);
-      setError(err.message || "No se pudo guardar la campaña. Intente de nuevo.");
+      console.error(`Error al ${id ? 'actualizar' : 'crear'} campaña:`, err);
+      setError(err.message || `No se pudo ${id ? 'actualizar' : 'crear'} la campaña.`);
     } finally {
-      setIsSubmitting(false); // Indicamos que el envío ha finalizado
+      setIsSubmitting(false);
     }
   };
 
-  // Renderizado condicional para el estado de carga (solo si estamos cargando una campaña existente)
-  if (loading && (id && id !== 'crear')) { 
+  if (loading) {
     return (
       <div className="container mt-4 text-center">
         <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Cargando campaña...</span>
+          <span className="visually-hidden">Cargando formulario...</span>
         </div>
-        <p>Cargando datos de la campaña para edición...</p>
+        <p>Cargando información de la campaña...</p>
       </div>
     );
   }
 
-  // Renderizado condicional para errores de carga o envío
-  if (error && !isSubmitting) { 
+  if (error) {
     return (
       <div className="container mt-4">
         <div className="alert alert-danger" role="alert">
           {error}
         </div>
-        <Link to="/campanas" className="btn btn-secondary mt-3">Volver a Campañas</Link>
+        {!authToken && (
+          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
+        )}
+        <button onClick={() => navigate('/campanas')} className="btn btn-secondary mt-3">Volver a Campañas</button>
       </div>
     );
   }
 
   return (
     <div className="container mt-4">
-      <h3>{ (id && id !== 'crear') ? 'Editar Campaña' : 'Crear Nueva Campaña'}</h3> 
-      <hr />
-      {error && isSubmitting && ( // Muestra error si hubo un problema al enviar el formulario
+      <h2 className="mb-4">{id ? 'Editar Campaña' : 'Crear Nueva Campaña'}</h2>
+      {error && (
         <div className="alert alert-danger" role="alert">
           {error}
         </div>
       )}
-      <FormularioCampana
-        formData={formData}
-        handleChange={handleChange}
-        handleSubmit={handleSubmit}
-        isSubmitting={isSubmitting}
-        isEditMode={!!id && id !== 'crear'} // Le indicamos al componente presentacional si es modo edición
-      />
+      <form onSubmit={handleSubmit}>
+        <div className="mb-3">
+          <label htmlFor="nombreInput" className="form-label">Nombre:</label>
+          <input
+            type="text"
+            className="form-control rounded-md"
+            id="nombreInput"
+            name="nombre"
+            value={formData.nombre}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="mb-3">
+          <label htmlFor="descripcionInput" className="form-label">Descripción:</label>
+          <textarea
+            className="form-control rounded-md"
+            id="descripcionInput"
+            name="descripcion"
+            value={formData.descripcion}
+            onChange={handleChange}
+            rows="3"
+            disabled={isSubmitting}
+          ></textarea>
+        </div>
+        <div className="mb-3">
+          <label htmlFor="fechaInicioInput" className="form-label">Fecha de Inicio:</label>
+          <input
+            type="datetime-local"
+            className="form-control rounded-md"
+            id="fechaInicioInput"
+            name="fecha_inicio"
+            value={formData.fecha_inicio}
+            onChange={handleChange}
+            required
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="mb-3">
+          <label htmlFor="fechaFinInput" className="form-label">Fecha de Fin (Opcional):</label>
+          <input
+            type="datetime-local"
+            className="form-control rounded-md"
+            id="fechaFinInput"
+            name="fecha_fin"
+            value={formData.fecha_fin}
+            onChange={handleChange}
+            disabled={isSubmitting}
+          />
+        </div>
+        <div className="d-grid gap-2">
+          <button type="submit" className="btn btn-primary rounded-md" disabled={isSubmitting}>
+            {isSubmitting ? 'Guardando...' : (id ? 'Actualizar Campaña' : 'Crear Campaña')}
+          </button>
+          <button type="button" onClick={() => navigate('/campanas')} className="btn btn-secondary rounded-md">
+            Cancelar
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
