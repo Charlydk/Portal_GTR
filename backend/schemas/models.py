@@ -11,6 +11,11 @@ class ProgresoTarea(str, Enum):
     COMPLETADA = "COMPLETADA"
     BLOQUEADA = "BLOQUEADA"
 
+class UserRole(str, Enum): # ¡NUEVO! Enum para los roles de usuario
+    SUPERVISOR = "SUPERVISOR"
+    RESPONSABLE = "RESPONSABLE"
+    ANALISTA = "ANALISTA"
+
 # --- Modelos Base (para crear y actualizar) ---
 
 class AnalistaBase(BaseModel):
@@ -23,6 +28,10 @@ class AnalistaBase(BaseModel):
         le=99999999,
         description="Código único de legajo del analista (BMS ID), entero de 4 a 8 dígitos"
     )
+    role: UserRole = UserRole.ANALISTA # ¡NUEVO! Rol por defecto
+
+class AnalistaCreate(AnalistaBase): # ¡NUEVO! Para crear un analista (incluye contraseña)
+    password: str = Field(..., min_length=6)
 
 class CampanaBase(BaseModel):
     nombre: str = Field(..., min_length=3, max_length=100)
@@ -108,3 +117,12 @@ class AcuseReciboAviso(AcuseReciboAvisoBase):
     analista: Analista
     aviso: Aviso
     model_config = ConfigDict(from_attributes=True)
+
+# --- Modelos para Autenticación (¡NUEVOS!) ---
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    email: Optional[str] = None
