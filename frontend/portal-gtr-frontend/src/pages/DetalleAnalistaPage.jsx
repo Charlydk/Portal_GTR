@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // ¡NUEVO! Importa useAuth
+import { useAuth } from '../context/AuthContext';
 
 function DetalleAnalistaPage() {
   const { id } = useParams(); // Obtiene el ID del analista de la URL
@@ -11,6 +11,13 @@ function DetalleAnalistaPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const { authToken, user } = useAuth(); // Obtiene authToken y user del contexto
+
+  // Estados para la funcionalidad de cambio de contraseña
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordChangeError, setPasswordChangeError] = useState(null);
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Función para obtener los detalles del analista
   const fetchAnalista = useCallback(async () => {
@@ -90,6 +97,7 @@ function DetalleAnalistaPage() {
           throw new Error("Acceso denegado. No tiene los permisos necesarios para desactivar analistas.");
         }
         throw new Error(`Error al desactivar analista: ${response.statusText}`);
+        // Considerar un mensaje más específico si el error es por intentar desactivarse a sí mismo
       }
 
       alert('Analista desactivado con éxito.');
@@ -99,6 +107,62 @@ function DetalleAnalistaPage() {
       setError(err.message || "No se pudo desactivar el analista.");
     }
   };
+
+  // Función para manejar el cambio de contraseña
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPasswordChangeError(null);
+    setPasswordChangeSuccess(null);
+    setIsChangingPassword(true);
+
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError("Las contraseñas no coinciden.");
+      setIsChangingPassword(false);
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPasswordChangeError("La contraseña debe tener al menos 6 caracteres.");
+      setIsChangingPassword(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/analistas/${analista.id}/password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ 
+          new_password: newPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al cambiar la contraseña: ${response.statusText}`);
+      }
+
+      setPasswordChangeSuccess("Contraseña actualizada con éxito.");
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      console.error("Error al cambiar contraseña:", err);
+      setPasswordChangeError(err.message || "No se pudo cambiar la contraseña. Intente de nuevo.");
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  // Lógica para determinar si el usuario actual puede cambiar la contraseña del analista visto
+  const canChangePassword = user && (
+    user.role === 'SUPERVISOR' ||
+    (user.role === 'RESPONSABLE' && analista && analista.role === 'ANALISTA')
+  );
+
+  // Lógica para determinar si el botón de desactivar es visible
+  const canDeactivate = user && user.role === 'SUPERVISOR' && analista && analista.esta_activo && analista.id !== user.id;
+
 
   if (loading) {
     return (
@@ -154,10 +218,61 @@ function DetalleAnalistaPage() {
         {user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
           <Link to={`/analistas/editar/${analista.id}`} className="btn btn-warning me-2">Editar Analista</Link>
         )}
-        {user && user.role === 'SUPERVISOR' && analista.esta_activo && (
+        {canDeactivate && (
           <button onClick={handleDesactivarAnalista} className="btn btn-danger">Desactivar Analista</button>
         )}
       </div>
+
+      {/* Sección para cambiar contraseña */}
+      {canChangePassword && (
+        <div className="mt-5 p-4 border rounded shadow-sm bg-light">
+          <h4>Cambiar Contraseña</h4>
+          <hr />
+          {passwordChangeError && (
+            <div className="alert alert-danger" role="alert">
+              {passwordChangeError}
+            </div>
+          )}
+          {passwordChangeSuccess && (
+            <div className="alert alert-success" role="alert">
+              {passwordChangeSuccess}
+            </div>
+          )}
+          <form onSubmit={handleChangePassword}>
+            <div className="mb-3">
+              <label htmlFor="newPasswordInput" className="form-label">Nueva Contraseña:</label>
+              <input
+                type="password"
+                className="form-control rounded-md"
+                id="newPasswordInput"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength="6"
+                disabled={isChangingPassword}
+              />
+            </div>
+            <div className="mb-3">
+              <label htmlFor="confirmPasswordInput" className="form-label">Confirmar Contraseña:</label>
+              <input
+                type="password"
+                className="form-control rounded-md"
+                id="confirmPasswordInput"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                minLength="6"
+                disabled={isChangingPassword}
+              />
+            </div>
+            <div className="d-grid gap-2">
+              <button type="submit" className="btn btn-primary rounded-md" disabled={isChangingPassword}>
+                {isChangingPassword ? 'Cambiando...' : 'Cambiar Contraseña'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
