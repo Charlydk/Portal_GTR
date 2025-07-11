@@ -14,7 +14,7 @@ from sql_app.models import UserRole
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
-    AnalistaBase, Analista, AnalistaCreate,
+    AnalistaBase, Analista, AnalistaCreate, PasswordUpdate, # ¡NUEVO! Importa PasswordUpdate
     CampanaBase, Campana,
     TareaBase, Tarea,
     ChecklistItemBase, ChecklistItem,
@@ -320,7 +320,7 @@ async def actualizar_analista(
 @app.put("/analistas/{analista_id}/password", response_model=Analista, summary="Actualizar contraseña de un Analista (Protegido)")
 async def update_analista_password(
     analista_id: int,
-    new_password: str,
+    password_update: PasswordUpdate, # ¡MODIFICADO! Ahora espera el esquema PasswordUpdate
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
@@ -342,7 +342,7 @@ async def update_analista_password(
     if current_analista.role == UserRole.RESPONSABLE and analista_a_actualizar.role != UserRole.ANALISTA:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede actualizar la contraseña de Analistas normales.")
     
-    hashed_password = get_password_hash(new_password)
+    hashed_password = get_password_hash(password_update.new_password) # ¡MODIFICADO! Accede a .new_password
     analista_a_actualizar.hashed_password = hashed_password
 
     await db.commit()
@@ -523,7 +523,7 @@ async def obtener_tareas(
     query = select(models.Tarea).options(
         selectinload(models.Tarea.analista),
         selectinload(models.Tarea.campana),
-        selectinload(models.Tarea.checklist_items) # ¡NUEVA LÍNEA! Carga los ítems de checklist
+        selectinload(models.Tarea.checklist_items)
     )
 
     if current_analista.role == UserRole.ANALISTA:
@@ -759,11 +759,11 @@ async def crear_comentario_campana(
     Crea un nuevo comentario asociado a una campaña y a un analista.
     Requiere autenticación.
     """
-    analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == comentario.analista_id))
+    analista_result = await db.execute(select(models.Analista).where(models.Analista.id == comentario.analista_id))
     if analista_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
-    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == comentario.campana_id))
+    campana_result = await db.execute(select(models.Campana).where(models.Campana.id == comentario.campana_id))
     if campana_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 

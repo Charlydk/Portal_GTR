@@ -11,7 +11,7 @@ class ProgresoTarea(str, Enum):
     COMPLETADA = "COMPLETADA"
     BLOQUEADA = "BLOQUEADA"
 
-class UserRole(str, Enum): # ¡NUEVO! Enum para los roles de usuario
+class UserRole(str, Enum):
     SUPERVISOR = "SUPERVISOR"
     RESPONSABLE = "RESPONSABLE"
     ANALISTA = "ANALISTA"
@@ -28,10 +28,13 @@ class AnalistaBase(BaseModel):
         le=99999999,
         description="Código único de legajo del analista (BMS ID), entero de 4 a 8 dígitos"
     )
-    role: UserRole = UserRole.ANALISTA # ¡NUEVO! Rol por defecto
+    role: UserRole = UserRole.ANALISTA
 
-class AnalistaCreate(AnalistaBase): # ¡NUEVO! Para crear un analista (incluye contraseña)
+class AnalistaCreate(AnalistaBase):
     password: str = Field(..., min_length=6)
+
+class PasswordUpdate(BaseModel): # ¡NUEVO! Esquema para actualizar la contraseña
+    new_password: str = Field(..., min_length=6)
 
 class CampanaBase(BaseModel):
     nombre: str = Field(..., min_length=3, max_length=100)
@@ -65,21 +68,20 @@ class AvisoBase(BaseModel):
     creador_id: int
     campana_id: Optional[int] = None
 
-class AcuseReciboAvisoBase(BaseModel): # Este es para la respuesta de la API (incluye aviso_id)
+class AcuseReciboAvisoBase(BaseModel):
     aviso_id: int
     analista_id: int
 
-class AcuseReciboCreate(BaseModel): # ¡NUEVO! Solo para el cuerpo de la solicitud POST
+class AcuseReciboCreate(BaseModel):
     analista_id: int
 
 # --- Modelos Completos (para respuesta de la API, incluyendo IDs y valores por defecto) ---
 
-# Declaración forward para evitar problemas de referencia circular
 class Analista(AnalistaBase):
     id: int
     fecha_creacion: datetime
     esta_activo: bool
-    hashed_password: str # Necesario para que el modelo Analista devuelto por /users/me/ tenga este campo
+    hashed_password: str
     model_config = ConfigDict(from_attributes=True)
 
 class Campana(CampanaBase):
@@ -92,7 +94,7 @@ class Tarea(TareaBase):
     fecha_creacion: datetime
     analista: Analista
     campana: Campana
-    checklist_items: List["ChecklistItem"] = [] # ¡DESCOMENTADA ESTA LÍNEA!
+    checklist_items: List["ChecklistItem"] = []
     model_config = ConfigDict(from_attributes=True)
 
 class ChecklistItem(ChecklistItemBase):
@@ -109,7 +111,7 @@ class ComentarioCampana(ComentarioCampanaBase):
 class Aviso(AvisoBase):
     id: int
     fecha_creacion: datetime
-    creador: Analista # Asegúrate de que el creador se carga
+    creador: Analista
     campana: Optional[Campana] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -120,7 +122,7 @@ class AcuseReciboAviso(AcuseReciboAvisoBase):
     aviso: Aviso
     model_config = ConfigDict(from_attributes=True)
 
-# --- Modelos para Autenticación (¡NUEVOS!) ---
+# --- Modelos para Autenticación ---
 
 class Token(BaseModel):
     access_token: str
