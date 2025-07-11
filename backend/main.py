@@ -10,19 +10,19 @@ from typing import Optional, List
 
 # Importamos los modelos de SQLAlchemy (para la DB)
 from sql_app import models
-from sql_app.models import UserRole
+from sql_app.models import UserRole # Importa el Enum UserRole
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
-    AnalistaBase, Analista, AnalistaCreate, PasswordUpdate, # ¡NUEVO! Importa PasswordUpdate
-    CampanaBase, Campana,
+    Token, TokenData, # Modelos de autenticación al principio
+    ProgresoTarea, UserRole,
+    AnalistaBase, Analista, AnalistaCreate, PasswordUpdate,
+    CampanaBase, Campana, CampanaSimple, # Importa CampanaSimple para la asignación
     TareaBase, Tarea,
-    ChecklistItemBase, ChecklistItem,
-    ComentarioCampanaBase, ComentarioCampana,
-    AvisoBase, Aviso,
-    AcuseReciboAvisoBase, AcuseReciboAviso, AcuseReciboCreate,
-    ProgresoTarea,
-    Token, TokenData
+    ChecklistItemBase, ChecklistItem, ChecklistItemSimple,
+    ComentarioCampanaBase, ComentarioCampana, ComentarioCampanaSimple,
+    AvisoBase, Aviso, AvisoSimple,
+    AcuseReciboAvisoBase, AcuseReciboAviso, AcuseReciboCreate, AcuseReciboAvisoSimple
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -85,7 +85,7 @@ async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSes
             raise credentials_exception
         
         token_data = TokenData(email=email)
-    except JWTError:
+    except Exception: # Usar Exception general para capturar JWTError y otros posibles errores de decodificación
         raise credentials_exception
     
     analista = await get_analista_by_email(token_data.email, db)
@@ -164,12 +164,21 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/users/me/", response_model=Analista, summary="Obtener información del Analista actual")
-async def read_users_me(current_analista: models.Analista = Depends(get_current_analista)):
+async def read_users_me(current_analista: models.Analista = Depends(get_current_analista), db: AsyncSession = Depends(get_db)):
     """
     Obtiene la información del analista que actualmente ha iniciado sesión.
     Requiere autenticación.
     """
-    return current_analista
+    # Cargar las campañas asignadas al analista actual
+    result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.id == current_analista.id)
+        .options(selectinload(models.Analista.campanas_asignadas))
+    )
+    analista_with_campaigns = result.scalars().first()
+    if not analista_with_campaigns:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+    return analista_with_campaigns
 
 
 # --- Endpoints para Analistas (Protegidos) ---
@@ -217,8 +226,8 @@ async def obtener_analistas(
     Obtiene la lista de todos los analistas **activos** desde la base de datos.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
-    result = await db.execute(select(models.Analista).where(models.Analista.esta_activo == True))
-    analistas = result.scalars().all()
+    result = await db.execute(select(models.Analista).where(models.Analista.esta_activo == True).options(selectinload(models.Analista.campanas_asignadas)))
+    analistas = result.scalars().unique().all() # Usar unique() para evitar duplicados si hay relaciones many-to-many
     return analistas
 
 
@@ -233,7 +242,11 @@ async def obtener_analista_por_id(
     Requiere autenticación.
     Un analista normal solo puede ver su propio perfil.
     """
-    result = await db.execute(select(models.Analista).filter(models.Analista.id == analista_id, models.Analista.esta_activo == True))
+    result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.id == analista_id, models.Analista.esta_activo == True)
+        .options(selectinload(models.Analista.campanas_asignadas)) # Cargar las campañas asignadas
+    )
     analista = result.scalars().first()
     if not analista:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado o inactivo.")
@@ -254,11 +267,11 @@ async def get_all_analistas(
     Obtiene una lista de todos los analistas, incluyendo inactivos si `include_inactive` es True.
     Requiere autenticación y rol de SUPERVISOR.
     """
-    query = select(models.Analista)
+    query = select(models.Analista).options(selectinload(models.Analista.campanas_asignadas))
     if not include_inactive:
         query = query.where(models.Analista.esta_activo == True)
     result = await db.execute(query)
-    analistas = result.scalars().all()
+    analistas = result.scalars().unique().all()
     return analistas
 
 
@@ -272,7 +285,11 @@ async def obtener_analista_por_bms_id(
     Obtiene un analista específico por su BMS ID (legajo) desde la base de datos.
     Requiere autenticación. Un analista normal solo puede ver su propio perfil.
     """
-    result = await db.execute(select(models.Analista).filter(models.Analista.bms_id == bms_id, models.Analista.esta_activo == True))
+    result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.bms_id == bms_id, models.Analista.esta_activo == True)
+        .options(selectinload(models.Analista.campanas_asignadas))
+    )
     analista = result.scalars().first()
     if not analista:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado por BMS ID o inactivo.")
@@ -320,7 +337,7 @@ async def actualizar_analista(
 @app.put("/analistas/{analista_id}/password", response_model=Analista, summary="Actualizar contraseña de un Analista (Protegido)")
 async def update_analista_password(
     analista_id: int,
-    password_update: PasswordUpdate, # ¡MODIFICADO! Ahora espera el esquema PasswordUpdate
+    password_update: PasswordUpdate,
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
@@ -333,7 +350,7 @@ async def update_analista_password(
     db_analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
     analista_a_actualizar = db_analista_result.scalars().first()
 
-    if analista_a_actualizar is None:
+    if analista_a_actualizar is None: # CORREGIDO: Usar 'is None' en Python
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
     if current_analista.role == UserRole.ANALISTA and current_analista.id != analista_id:
@@ -342,7 +359,7 @@ async def update_analista_password(
     if current_analista.role == UserRole.RESPONSABLE and analista_a_actualizar.role != UserRole.ANALISTA:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede actualizar la contraseña de Analistas normales.")
     
-    hashed_password = get_password_hash(password_update.new_password) # ¡MODIFICADO! Accede a .new_password
+    hashed_password = get_password_hash(password_update.new_password)
     analista_a_actualizar.hashed_password = hashed_password
 
     await db.commit()
@@ -377,6 +394,73 @@ async def desactivar_analista(
 
     return
 
+# --- Endpoints para Asignación de Campañas a Analistas (¡NUEVOS!) ---
+
+@app.post("/analistas/{analista_id}/campanas/{campana_id}", response_model=Analista, status_code=status.HTTP_200_OK, summary="Asignar Campaña a Analista")
+async def asignar_campana_a_analista(
+    analista_id: int,
+    campana_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+):
+    """
+    Asigna una campaña a un analista.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    """
+    analista_result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.id == analista_id)
+        .options(selectinload(models.Analista.campanas_asignadas))
+    )
+    analista = analista_result.scalars().first()
+    if not analista:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+
+    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
+    campana = campana_result.scalars().first()
+    if not campana:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
+
+    if campana in analista.campanas_asignadas:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La campaña ya está asignada a este analista.")
+
+    analista.campanas_asignadas.append(campana)
+    await db.commit()
+    await db.refresh(analista)
+    return analista
+
+@app.delete("/analistas/{analista_id}/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desasignar Campaña de Analista")
+async def desasignar_campana_de_analista(
+    analista_id: int,
+    campana_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+):
+    """
+    Desasigna una campaña de un analista.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    """
+    analista_result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.id == analista_id)
+        .options(selectinload(models.Analista.campanas_asignadas))
+    )
+    analista = analista_result.scalars().first()
+    if not analista:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
+
+    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
+    campana = campana_result.scalars().first()
+    if not campana:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
+
+    if campana not in analista.campanas_asignadas:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La campaña no está asignada a este analista.")
+
+    analista.campanas_asignadas.remove(campana)
+    await db.commit()
+    return
+
 # --- Endpoints para Campañas (Protegidos) ---
 
 @app.post("/campanas/", response_model=Campana, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Campaña (Protegido por Supervisor/Responsable)")
@@ -405,8 +489,8 @@ async def obtener_campanas(
     Obtiene la lista de todas las campañas desde la base de datos.
     Requiere autenticación.
     """
-    result = await db.execute(select(models.Campana))
-    campanas = result.scalars().all()
+    result = await db.execute(select(models.Campana).options(selectinload(models.Campana.analistas_asignados)))
+    campanas = result.scalars().unique().all()
     return campanas
 
 
@@ -420,7 +504,11 @@ async def obtener_campana_por_id(
     Obtiene una campaña específica por su ID desde la base de datos.
     Requiere autenticación.
     """
-    result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
+    result = await db.execute(
+        select(models.Campana)
+        .filter(models.Campana.id == campana_id)
+        .options(selectinload(models.Campana.analistas_asignados)) # Cargar analistas asignados
+    )
     campana = result.scalars().first()
     if not campana:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
@@ -850,11 +938,10 @@ async def crear_aviso(
     await db.commit()
     await db.refresh(db_aviso)
 
-    await db.execute(
-        select(models.Aviso)
-        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
-        .filter(models.Aviso.id == db_aviso.id)
-    )
+    # Forzar la carga de relaciones antes de la serialización de Pydantic
+    # Esto es crucial para evitar MissingGreenlet en la respuesta POST
+    await db.refresh(db_aviso, attribute_names=["creador", "campana", "acuses_recibo"])
+
     return db_aviso
 
 @app.get("/avisos/", response_model=List[Aviso], summary="Obtener Avisos (con filtros opcionales) (Protegido)")
@@ -870,11 +957,18 @@ async def obtener_avisos(
     """
     query = select(models.Aviso).options(
         selectinload(models.Aviso.creador),
-        selectinload(models.Aviso.campana)
+        selectinload(models.Aviso.campana),
+        selectinload(models.Aviso.acuses_recibo) # Cargar acuses de recibo
     )
 
     if current_analista.role == UserRole.ANALISTA:
-        query = query.where(models.Aviso.creador_id == current_analista.id)
+        query = query.filter(
+            (models.Aviso.creador_id == current_analista.id) |
+            (models.Aviso.campana_id.is_(None)) |
+            (models.Aviso.campana_id.in_(
+                select(models.analistas_campanas.c.campana_id).where(models.analistas_campanas.c.analista_id == current_analista.id)
+            ))
+        )
     else:
         if creador_id:
             query = query.where(models.Aviso.creador_id == creador_id)
@@ -900,15 +994,32 @@ async def obtener_aviso_por_id(
         .filter(models.Aviso.id == aviso_id)
         .options(
             selectinload(models.Aviso.creador),
-            selectinload(models.Aviso.campana)
+            selectinload(models.Aviso.campana),
+            selectinload(models.Aviso.acuses_recibo) # Cargar acuses de recibo
         )
     )
     aviso = result.scalars().first()
     if not aviso:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
     
-    if current_analista.role == UserRole.ANALISTA and aviso.creador_id != current_analista.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este aviso.")
+    # Forzar la carga de relaciones antes de la serialización de Pydantic
+    await db.refresh(aviso, attribute_names=["creador", "campana", "acuses_recibo"])
+
+    if current_analista.role == UserRole.ANALISTA:
+        # Analista only sees avisos created by them or associated with their campaigns
+        is_creator = aviso.creador_id == current_analista.id
+        is_assigned_to_campaign = False
+        if aviso.campana_id:
+            assigned_campaigns_result = await db.execute(
+                select(models.analistas_campanas.c.campana_id)
+                .where(models.analistas_campanas.c.analista_id == current_analista.id)
+            )
+            # Fetch all assigned campaign IDs for the current analista
+            assigned_campaign_ids = [c_id for (c_id,) in assigned_campaigns_result.all()]
+            is_assigned_to_campaign = aviso.campana_id in assigned_campaign_ids
+        
+        if not is_creator and not is_assigned_to_campaign:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este aviso.")
 
     return aviso
 
@@ -953,7 +1064,7 @@ async def actualizar_aviso(
 
     updated_aviso_result = await db.execute(
         select(models.Aviso)
-        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
+        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana), selectinload(models.Aviso.acuses_recibo)) # Cargar acuses de recibo
         .filter(models.Aviso.id == aviso_id)
     )
     updated_aviso = updated_aviso_result.scalars().first()

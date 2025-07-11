@@ -17,7 +17,8 @@ import DetalleAvisoPage from './pages/DetalleAvisoPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
-import FormularioChecklistItemPage from './pages/FormularioChecklistItemPage'; // ¡NUEVO! Importa el formulario de checklist
+import FormularioChecklistItemPage from './pages/FormularioChecklistItemPage';
+import AsignacionCampanasPage from './pages/AsignacionCampanasPage'; // ¡NUEVO! Importa la nueva página
 
 import { AuthProvider, useAuth } from './context/AuthContext';
 
@@ -93,7 +94,6 @@ function App() {
               </PrivateRoute>
             } />
 
-
             {/* Campañas - Crear/Editar/Eliminar solo para Supervisor/Responsable */}
             <Route path="/campanas" element={
               <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE', 'ANALISTA']}>
@@ -147,6 +147,13 @@ function App() {
             <Route path="/tareas/:tareaId/checklist_items/editar/:id" element={
               <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
                 <FormularioChecklistItemPage />
+              </PrivateRoute>
+            } />
+
+            {/* Rutas para Asignación de Campañas (¡NUEVA!) */}
+            <Route path="/asignacion-campanas" element={
+              <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                <AsignacionCampanasPage />
               </PrivateRoute>
             } />
 
