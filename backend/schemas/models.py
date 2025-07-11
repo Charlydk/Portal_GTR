@@ -1,10 +1,17 @@
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 
-# --- Enums ---
+# --- 1. Modelos para Autenticación (Son independientes, van primero) ---
+class Token(BaseModel):
+    access_token: str
+    token_type: str
 
+class TokenData(BaseModel):
+    email: Optional[str] = None
+
+# --- 2. Enums ---
 class ProgresoTarea(str, Enum):
     PENDIENTE = "PENDIENTE"
     EN_PROGRESO = "EN_PROGRESO"
@@ -16,24 +23,15 @@ class UserRole(str, Enum):
     RESPONSABLE = "RESPONSABLE"
     ANALISTA = "ANALISTA"
 
-# --- Modelos Base (para crear y actualizar) ---
-
+# --- 3. Base Models (Definiciones básicas de campos, sin relaciones complejas) ---
 class AnalistaBase(BaseModel):
     nombre: str
     apellido: str
     email: EmailStr
-    bms_id: int = Field(
-        ...,
-        ge=10000,
-        le=99999999,
-        description="Código único de legajo del analista (BMS ID), entero de 4 a 8 dígitos"
-    )
+    bms_id: int = Field(..., ge=10000, le=99999999)
     role: UserRole = UserRole.ANALISTA
 
-class AnalistaCreate(AnalistaBase):
-    password: str = Field(..., min_length=6)
-
-class PasswordUpdate(BaseModel): # ¡NUEVO! Esquema para actualizar la contraseña
+class PasswordUpdate(BaseModel):
     new_password: str = Field(..., min_length=6)
 
 class CampanaBase(BaseModel):
@@ -47,7 +45,6 @@ class TareaBase(BaseModel):
     descripcion: Optional[str] = None
     fecha_vencimiento: Optional[datetime] = None
     progreso: ProgresoTarea = ProgresoTarea.PENDIENTE
-
     analista_id: int
     campana_id: int
 
@@ -75,58 +72,119 @@ class AcuseReciboAvisoBase(BaseModel):
 class AcuseReciboCreate(BaseModel):
     analista_id: int
 
-# --- Modelos Completos (para respuesta de la API, incluyendo IDs y valores por defecto) ---
+# --- 4. Create Models (Extienden las bases con campos adicionales para creación) ---
+class AnalistaCreate(AnalistaBase):
+    password: str = Field(..., min_length=6)
 
+# --- 5. Simple Models (Versiones ligeras para evitar recursión en relaciones) ---
+# ¡CRÍTICO! Definimos todas las versiones "Simple" aquí, antes de los modelos completos
+class AnalistaSimple(BaseModel):
+    id: int
+    nombre: str
+    apellido: str
+    email: EmailStr
+    bms_id: int
+    class Config:
+        from_attributes = True
+
+class CampanaSimple(BaseModel):
+    id: int
+    nombre: str
+    class Config:
+        from_attributes = True
+
+class ChecklistItemSimple(BaseModel):
+    id: int
+    descripcion: str
+    completado: bool
+    class Config:
+        from_attributes = True
+
+class ComentarioCampanaSimple(BaseModel):
+    id: int
+    contenido: str
+    fecha_creacion: datetime
+    class Config:
+        from_attributes = True
+
+class AvisoSimple(BaseModel): # Versión simple de Aviso para AcuseReciboAviso
+    id: int
+    titulo: str
+    class Config:
+        from_attributes = True
+
+class AcuseReciboAvisoSimple(BaseModel): # Versión simple de AcuseReciboAviso para Aviso
+    id: int
+    fecha_acuse: datetime
+    class Config:
+        from_attributes = True
+
+# --- 6. Full Models (Modelos de respuesta de la API, incluyen IDs y relaciones) ---
+# Estos modelos ahora pueden referenciar a los "Simple Models" sin problemas.
 class Analista(AnalistaBase):
     id: int
     fecha_creacion: datetime
     esta_activo: bool
     hashed_password: str
-    model_config = ConfigDict(from_attributes=True)
+    campanas_asignadas: List["CampanaSimple"] = [] # Usa el Simple Model
+    class Config:
+        from_attributes = True
 
 class Campana(CampanaBase):
     id: int
     fecha_creacion: datetime
-    model_config = ConfigDict(from_attributes=True)
+    analistas_asignados: List["AnalistaSimple"] = [] # Usa el Simple Model
+    class Config:
+        from_attributes = True
 
 class Tarea(TareaBase):
     id: int
     fecha_creacion: datetime
-    analista: Analista
-    campana: Campana
-    checklist_items: List["ChecklistItem"] = []
-    model_config = ConfigDict(from_attributes=True)
+    analista: AnalistaSimple
+    campana: CampanaSimple
+    checklist_items: List["ChecklistItemSimple"] = [] # Usa el Simple Model
+    class Config:
+        from_attributes = True
 
 class ChecklistItem(ChecklistItemBase):
     id: int
     fecha_creacion: datetime
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 class ComentarioCampana(ComentarioCampanaBase):
     id: int
     fecha_creacion: datetime
-    analista: Analista
-    model_config = ConfigDict(from_attributes=True)
+    analista: AnalistaSimple
+    campana: CampanaSimple
+    class Config:
+        from_attributes = True
 
 class Aviso(AvisoBase):
     id: int
     fecha_creacion: datetime
-    creador: Analista
-    campana: Optional[Campana] = None
-    model_config = ConfigDict(from_attributes=True)
+    creador_id: int
+    creador: AnalistaSimple
+    campana: Optional[CampanaSimple] = None
+    acuses_recibo: List["AcuseReciboAvisoSimple"] = [] # Usa el Simple Model
+    class Config:
+        from_attributes = True
 
 class AcuseReciboAviso(AcuseReciboAvisoBase):
     id: int
     fecha_acuse: datetime
-    analista: Analista
-    aviso: Aviso
-    model_config = ConfigDict(from_attributes=True)
+    analista: AnalistaSimple
+    aviso: AvisoSimple # Usa el Simple Model para evitar recursión profunda
+    class Config:
+        from_attributes = True
 
-# --- Modelos para Autenticación ---
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    email: Optional[str] = None
+# --- 7. Rebuild Models (¡CRÍTICO! Para resolver referencias adelantadas) ---
+# Llama a model_rebuild() para cada modelo que pueda tener forward references.
+# Esto debe hacerse DESPUÉS de que todas las clases estén definidas.
+Analista.model_rebuild()
+Campana.model_rebuild()
+Tarea.model_rebuild()
+ChecklistItem.model_rebuild()
+ComentarioCampana.model_rebuild()
+Aviso.model_rebuild()
+AcuseReciboAviso.model_rebuild()

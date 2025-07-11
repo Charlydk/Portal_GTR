@@ -1,252 +1,293 @@
 // src/pages/FormularioAvisoPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Container, Form, Button, Alert, Spinner, Card } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // Importa useAuth
+import { useAuth } from '../context/AuthContext';
 
 function FormularioAvisoPage() {
-  const { id } = useParams(); // Para saber si estamos editando
+  const { id } = useParams(); // Para saber si estamos editando (id existe) o creando
   const navigate = useNavigate();
+  const { authToken, user } = useAuth();
+
   const [formData, setFormData] = useState({
     titulo: '',
     contenido: '',
     fecha_vencimiento: '',
     creador_id: '',
-    campana_id: ''
+    campana_id: '',
   });
-  const [analistas, setAnalistas] = useState([]);
-  const [campanas, setCampanas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const { authToken } = useAuth(); // Obtiene authToken del contexto
+  const [successMessage, setSuccessMessage] = useState(null);
+  const [analistas, setAnalistas] = useState([]);
+  const [campanas, setCampanas] = useState([]);
 
-  const fetchDependencies = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const isEditing = Boolean(id);
+
+  // Función para cargar datos de analistas y campañas para los selectores
+  const fetchSelectData = useCallback(async () => {
+    if (!authToken) return;
     try {
-      // Obtener analistas
-      const analistasResponse = await fetch(`${API_BASE_URL}/analistas/`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
-      if (!analistasResponse.ok) throw new Error(`Error al cargar analistas: ${analistasResponse.statusText}`);
-      const analistasData = await analistasResponse.json();
-      setAnalistas(analistasData);
+      const [analistasRes, campanasRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/analistas/`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+        fetch(`${API_BASE_URL}/campanas/`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+      ]);
 
-      // Obtener campañas
-      const campanasResponse = await fetch(`${API_BASE_URL}/campanas/`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
-      if (!campanasResponse.ok) throw new Error(`Error al cargar campañas: ${campanasResponse.statusText}`);
-      const campanasData = await campanasResponse.json();
+      if (!analistasRes.ok) throw new Error(`Error al cargar analistas: ${analistasRes.statusText}`);
+      if (!campanasRes.ok) throw new Error(`Error al cargar campañas: ${campanasRes.statusText}`);
+
+      const analistasData = await analistasRes.json();
+      const campanasData = await campanasRes.json();
+
+      setAnalistas(analistasData);
       setCampanas(campanasData);
 
-      // Si estamos editando, cargar datos del aviso
-      if (id) {
-        const avisoResponse = await fetch(`${API_BASE_URL}/avisos/${id}`, {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        if (!avisoResponse.ok) throw new Error(`Error al cargar el aviso: ${avisoResponse.statusText}`);
-        const avisoData = await avisoResponse.json();
-        setFormData({
-          titulo: avisoData.titulo,
-          contenido: avisoData.contenido || '',
-          fecha_vencimiento: avisoData.fecha_vencimiento ? new Date(avisoData.fecha_vencimiento).toISOString().slice(0, 16) : '',
-          creador_id: avisoData.creador_id.toString(),
-          campana_id: avisoData.campana_id ? avisoData.campana_id.toString() : '' // Puede ser opcional
-        });
-      }
     } catch (err) {
-      console.error("Error al cargar dependencias de aviso:", err);
-      setError(err.message || "No se pudieron cargar los datos necesarios.");
-    } finally {
-      setLoading(false);
+      console.error("Error fetching select data:", err);
+      setError(`Error al cargar datos para selectores: ${err.message}`);
+    }
+  }, [authToken]);
+
+  // Función para cargar los datos del aviso si estamos editando
+  const fetchAvisoData = useCallback(async () => {
+    if (!id || !authToken) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/avisos/${id}`, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Error al cargar aviso: ${response.statusText}`);
+      }
+      const data = await response.json();
+      setFormData({
+        titulo: data.titulo,
+        contenido: data.contenido,
+        fecha_vencimiento: data.fecha_vencimiento ? new Date(data.fecha_vencimiento).toISOString().slice(0, 16) : '',
+        creador_id: data.creador_id,
+        campana_id: data.campana_id || '', // Puede ser null
+      });
+    } catch (err) {
+      console.error("Error fetching aviso data:", err);
+      setError(`Error al cargar los datos del aviso: ${err.message}`);
     }
   }, [id, authToken]);
 
   useEffect(() => {
-    if (authToken) {
-      fetchDependencies();
-    } else {
+    const loadPageData = async () => {
+      setLoading(true);
+      setError(null);
+      setSuccessMessage(null);
+
+      await fetchSelectData(); // Cargar datos para selectores siempre
+
+      if (isEditing) {
+        await fetchAvisoData(); // Si edita, cargar datos del aviso
+      } else if (user) {
+        // Si es creando y hay usuario, establecer creador_id por defecto
+        setFormData(prev => ({ ...prev, creador_id: user.id }));
+      }
       setLoading(false);
-      setError("Necesita iniciar sesión para gestionar avisos.");
+    };
+
+    if (!authToken) {
+      setLoading(false);
+      setError("No autenticado. Por favor, inicie sesión.");
+      return;
     }
-  }, [authToken, fetchDependencies]);
+
+    loadPageData();
+  }, [authToken, isEditing, user, fetchSelectData, fetchAvisoData]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: value,
     }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsSubmitting(true);
+    setLoading(true);
     setError(null);
+    setSuccessMessage(null);
+
+    // Validaciones básicas
+    if (!formData.titulo || !formData.contenido || !formData.creador_id) {
+      setError("Título, contenido y creador son campos obligatorios.");
+      setLoading(false);
+      return;
+    }
+
+    // Preparar los datos para la API
+    const payload = {
+      ...formData,
+      creador_id: parseInt(formData.creador_id),
+      campana_id: formData.campana_id ? parseInt(formData.campana_id) : null,
+      // Convertir fecha_vencimiento a formato ISO si existe, o a null
+      fecha_vencimiento: formData.fecha_vencimiento ? new Date(formData.fecha_vencimiento).toISOString() : null,
+    };
 
     try {
-      const method = id ? 'PUT' : 'POST';
-      const url = id ? `${API_BASE_URL}/avisos/${id}` : `${API_BASE_URL}/avisos/`;
-
-      const dataToSend = {
-        ...formData,
-        creador_id: parseInt(formData.creador_id),
-        campana_id: formData.campana_id ? parseInt(formData.campana_id) : null, // Puede ser null
-        fecha_vencimiento: formData.fecha_vencimiento ? new Date(formData.fecha_vencimiento).toISOString() : null,
-      };
+      const method = isEditing ? 'PUT' : 'POST';
+      const url = isEditing ? `${API_BASE_URL}/avisos/${id}` : `${API_BASE_URL}/avisos/`;
 
       const response = await fetch(url, {
         method: method,
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`, // Envía el token
+          'Authorization': `Bearer ${authToken}`,
         },
-        body: JSON.stringify(dataToSend),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        if (response.status === 422 && errorData.detail) {
-          const validationErrors = errorData.detail.map(err => {
-            const field = err.loc[err.loc.length - 1];
-            return `${field}: ${err.msg}`;
-          }).join('\n');
-          throw new Error(`Errores de validación:\n${validationErrors}`);
-        }
-        throw new Error(errorData.detail || `Error al ${id ? 'actualizar' : 'crear'} aviso: ${response.statusText}`);
+        throw new Error(errorData.detail || `Error al ${isEditing ? 'actualizar' : 'crear'} aviso: ${response.statusText}`);
       }
 
-      alert(`Aviso ${id ? 'actualizado' : 'creado'} con éxito.`);
-      navigate('/avisos'); // Redirige a la lista de avisos
+      setSuccessMessage(`Aviso ${isEditing ? 'actualizado' : 'creado'} exitosamente.`);
+      setTimeout(() => {
+        navigate('/avisos'); // Redirigir a la lista de avisos
+      }, 1500);
+
     } catch (err) {
-      console.error(`Error al ${id ? 'actualizar' : 'crear'} aviso:`, err);
-      setError(err.message || `No se pudo ${id ? 'actualizar' : 'crear'} el aviso.`);
+      console.error("Error submitting form:", err);
+      setError(err.message || `No se pudo ${isEditing ? 'actualizar' : 'crear'} el aviso.`);
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   };
 
   if (loading) {
     return (
-      <div className="container mt-4 text-center">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Cargando formulario...</span>
-        </div>
-        <p>Cargando información del aviso...</p>
-      </div>
+      <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
+        <Spinner animation="border" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </Spinner>
+        <p className="ms-3 text-muted">Cargando datos del formulario...</p>
+      </Container>
     );
   }
 
-  if (error) {
+  if (error && !successMessage) { // Mostrar error solo si no hay mensaje de éxito
     return (
-      <div className="container mt-4">
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-        {!authToken && (
-          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
-        )}
-        <button onClick={() => navigate('/avisos')} className="btn btn-secondary mt-3">Volver a Avisos</button>
-      </div>
+      <Container className="mt-4">
+        <Alert variant="danger">
+          <Alert.Heading>¡Error!</Alert.Heading>
+          <p>{error}</p>
+          <Button variant="primary" onClick={() => navigate('/avisos')}>Volver a Avisos</Button>
+        </Alert>
+      </Container>
     );
   }
 
   return (
-    <div className="container mt-4">
-      <h2 className="mb-4">{id ? 'Editar Aviso' : 'Crear Nuevo Aviso'}</h2>
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      )}
-      <form onSubmit={handleSubmit}>
-        <div className="mb-3">
-          <label htmlFor="tituloInput" className="form-label">Título:</label>
-          <input
-            type="text"
-            className="form-control rounded-md"
-            id="tituloInput"
-            name="titulo"
-            value={formData.titulo}
-            onChange={handleChange}
-            required
-            disabled={isSubmitting}
-          />
-        </div>
-        <div className="mb-3">
-          <label htmlFor="contenidoInput" className="form-label">Contenido:</label>
-          <textarea
-            className="form-control rounded-md"
-            id="contenidoInput"
-            name="contenido"
-            value={formData.contenido}
-            onChange={handleChange}
-            rows="5"
-            required
-            disabled={isSubmitting}
-          ></textarea>
-        </div>
-        <div className="mb-3">
-          <label htmlFor="fechaVencimientoInput" className="form-label">Fecha de Vencimiento (Opcional):</label>
-          <input
-            type="datetime-local"
-            className="form-control rounded-md"
-            id="fechaVencimientoInput"
-            name="fecha_vencimiento"
-            value={formData.fecha_vencimiento}
-            onChange={handleChange}
-            disabled={isSubmitting}
-          />
-        </div>
-        <div className="mb-3">
-          <label htmlFor="creadorSelect" className="form-label">Creador:</label>
-          <select
-            className="form-select rounded-md"
-            id="creadorSelect"
-            name="creador_id"
-            value={formData.creador_id}
-            onChange={handleChange}
-            required
-            disabled={isSubmitting}
-          >
-            <option value="">Seleccione un creador</option>
-            {analistas.map(analista => (
-              <option key={analista.id} value={analista.id}>
-                {analista.nombre} {analista.apellido} (BMS ID: {analista.bms_id})
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="mb-3">
-          <label htmlFor="campanaSelect" className="form-label">Campaña Asociada (Opcional):</label>
-          <select
-            className="form-select rounded-md"
-            id="campanaSelect"
-            name="campana_id"
-            value={formData.campana_id}
-            onChange={handleChange}
-            disabled={isSubmitting}
-          >
-            <option value="">Ninguna</option>
-            {campanas.map(campana => (
-              <option key={campana.id} value={campana.id}>
-                {campana.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="d-grid gap-2">
-          <button type="submit" className="btn btn-primary rounded-md" disabled={isSubmitting}>
-            {isSubmitting ? 'Guardando...' : (id ? 'Actualizar Aviso' : 'Crear Aviso')}
-          </button>
-          <button type="button" onClick={() => navigate('/avisos')} className="btn btn-secondary rounded-md">
-            Cancelar
-          </button>
-        </div>
-      </form>
-    </div>
+    <Container className="py-5">
+      <Card className="shadow-sm">
+        <Card.Header as="h2" className="bg-primary text-white text-center">
+          {isEditing ? 'Editar Aviso' : 'Crear Nuevo Aviso'}
+        </Card.Header>
+        <Card.Body>
+          {successMessage && <Alert variant="success">{successMessage}</Alert>}
+          
+          <Form onSubmit={handleSubmit}>
+            <Form.Group className="mb-3" controlId="formTitulo">
+              <Form.Label>Título</Form.Label>
+              <Form.Control
+                type="text"
+                name="titulo"
+                value={formData.titulo}
+                onChange={handleChange}
+                placeholder="Ingrese el título del aviso"
+                required
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3" controlId="formContenido">
+              <Form.Label>Contenido</Form.Label>
+              <Form.Control
+                as="textarea"
+                rows={5}
+                name="contenido"
+                value={formData.contenido}
+                onChange={handleChange}
+                placeholder="Ingrese el contenido del aviso"
+                required
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3" controlId="formFechaVencimiento">
+              <Form.Label>Fecha de Vencimiento (Opcional)</Form.Label>
+              <Form.Control
+                type="datetime-local"
+                name="fecha_vencimiento"
+                value={formData.fecha_vencimiento}
+                onChange={handleChange}
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3" controlId="formCreadorId">
+              <Form.Label>Creador</Form.Label>
+              <Form.Select
+                name="creador_id"
+                value={formData.creador_id}
+                onChange={handleChange}
+                required
+                // Solo Supervisor puede cambiar el creador
+                disabled={user && user.role !== 'SUPERVISOR' && isEditing}
+              >
+                <option value="">Seleccione un creador</option>
+                {analistas.map(analista => (
+                  <option key={analista.id} value={analista.id}>
+                    {analista.nombre} {analista.apellido} ({analista.email})
+                  </option>
+                ))}
+              </Form.Select>
+              <Form.Text className="text-muted">
+                {user && user.role === 'ANALISTA' && !isEditing && `Por defecto: ${user.nombre} ${user.apellido}`}
+                {user && user.role !== 'SUPERVISOR' && isEditing && `Solo un SUPERVISOR puede cambiar el creador de un aviso existente.`}
+              </Form.Text>
+            </Form.Group>
+
+            <Form.Group className="mb-3" controlId="formCampanaId">
+              <Form.Label>Campaña (Opcional)</Form.Label>
+              <Form.Select
+                name="campana_id"
+                value={formData.campana_id}
+                onChange={handleChange}
+              >
+                <option value="">Ninguna Campaña</option>
+                {campanas.map(campana => (
+                  <option key={campana.id} value={campana.id}>
+                    {campana.nombre}
+                  </option>
+                ))}
+              </Form.Select>
+              <Form.Text className="text-muted">
+                Asocie este aviso a una campaña específica.
+              </Form.Text>
+            </Form.Group>
+
+            <div className="d-grid gap-2">
+              <Button variant="primary" type="submit" disabled={loading}>
+                {loading ? (
+                  <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
+                ) : (
+                  isEditing ? 'Actualizar Aviso' : 'Crear Aviso'
+                )}
+              </Button>
+              <Button variant="secondary" onClick={() => navigate('/avisos')} disabled={loading}>
+                Cancelar
+              </Button>
+            </div>
+          </Form>
+        </Card.Body>
+      </Card>
+    </Container>
   );
 }
 

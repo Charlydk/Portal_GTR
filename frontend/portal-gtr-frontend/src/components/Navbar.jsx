@@ -1,68 +1,59 @@
 // src/components/Navbar.jsx
 import React from 'react';
-import { Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext'; // Importa el hook de autenticación
+import { Link, useNavigate } from 'react-router-dom';
+import { Navbar as BSNavbar, Nav, Container, NavDropdown, Button } from 'react-bootstrap';
+import { useAuth } from '../context/AuthContext'; // Importa el hook useAuth
 
 function Navbar() {
   const { user, logout } = useAuth(); // Obtiene el usuario y la función de logout del contexto
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout(); // Llama a la función de logout del contexto
+    navigate('/login'); // Redirige al login después de cerrar sesión
+  };
 
   return (
-    <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
-      <div className="container-fluid">
-        <Link className="navbar-brand" to="/">Portal GTR</Link>
-        <button
-          className="navbar-toggler"
-          type="button"
-          data-bs-toggle="collapse"
-          data-bs-target="#navbarNav"
-          aria-controls="navbarNav"
-          aria-expanded="false"
-          aria-label="Toggle navigation"
-        >
-          <span className="navbar-toggler-icon"></span>
-        </button>
-        <div className="collapse navbar-collapse" id="navbarNav">
-          <ul className="navbar-nav me-auto mb-2 mb-lg-0">
-            <li className="nav-item">
-              <Link className="nav-link" to="/analistas">Analistas</Link>
-            </li>
-            <li className="nav-item">
-              <Link className="nav-link" to="/campanas">Campañas</Link>
-            </li>
-            <li className="nav-item">
-              <Link className="nav-link" to="/tareas">Tareas</Link>
-            </li>
-            <li className="nav-item">
-              <Link className="nav-link" to="/avisos">Avisos</Link>
-            </li>
-            {/* Puedes añadir más enlaces aquí si es necesario */}
-          </ul>
-          <ul className="navbar-nav">
-            {user ? (
+    <BSNavbar bg="dark" variant="dark" expand="lg" className="mb-4 shadow-sm">
+      <Container>
+        <BSNavbar.Brand as={Link} to="/dashboard">Portal GTR</BSNavbar.Brand>
+        <BSNavbar.Toggle aria-controls="basic-navbar-nav" />
+        <BSNavbar.Collapse id="basic-navbar-nav">
+          <Nav className="me-auto">
+            {user && ( // Solo muestra los enlaces si el usuario está autenticado
               <>
-                <li className="nav-item">
-                  <span className="nav-link text-white">Hola, {user.nombre} ({user.role})</span>
-                </li>
-                <li className="nav-item">
-                  <button className="btn btn-outline-light ms-2" onClick={logout}>
-                    Cerrar Sesión
-                  </button>
-                </li>
-              </>
-            ) : (
-              <>
-                <li className="nav-item">
-                  <Link className="nav-link" to="/login">Iniciar Sesión</Link>
-                </li>
-                <li className="nav-item">
-                  <Link className="nav-link" to="/register">Registrarse</Link>
-                </li>
+                <Nav.Link as={Link} to="/dashboard">Dashboard</Nav.Link>
+                <Nav.Link as={Link} to="/tareas">Tareas</Nav.Link>
+                <Nav.Link as={Link} to="/campanas">Campañas</Nav.Link>
+                <Nav.Link as={Link} to="/avisos">Avisos</Nav.Link>
+
+                {(user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
+                  <>
+                    <Nav.Link as={Link} to="/analistas">Analistas</Nav.Link>
+                    {/* ¡NUEVO ENLACE! */}
+                    <Nav.Link as={Link} to="/asignacion-campanas">Asignar Campañas</Nav.Link>
+                  </>
+                )}
               </>
             )}
-          </ul>
-        </div>
-      </div>
-    </nav>
+          </Nav>
+          <Nav>
+            {user ? (
+              <NavDropdown title={`Hola, ${user.nombre} (${user.role})`} id="basic-nav-dropdown" align="end">
+                <NavDropdown.Item as={Link} to={`/analistas/${user.id}`}>Mi Perfil</NavDropdown.Item>
+                <NavDropdown.Divider />
+                <NavDropdown.Item onClick={handleLogout}>Cerrar Sesión</NavDropdown.Item>
+              </NavDropdown>
+            ) : (
+              <>
+                <Nav.Link as={Link} to="/login">Iniciar Sesión</Nav.Link>
+                <Nav.Link as={Link} to="/register">Registrarse</Nav.Link>
+              </>
+            )}
+          </Nav>
+        </BSNavbar.Collapse>
+      </Container>
+    </BSNavbar>
   );
 }
 

@@ -1,163 +1,236 @@
 // src/pages/DetalleAvisoPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { Container, Card, Button, Alert, Spinner, ListGroup } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // Importa useAuth
+import { useAuth } from '../context/AuthContext';
 
 function DetalleAvisoPage() {
-  const { id } = useParams(); // Obtiene el ID del aviso de la URL
+  const { id } = useParams();
   const navigate = useNavigate();
+  const { authToken, user } = useAuth();
+
   const [aviso, setAviso] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const { authToken, user } = useAuth(); // Obtiene authToken y user del contexto
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState(null);
 
-  // Función para obtener los detalles del aviso
   const fetchAviso = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const avisoId = parseInt(id); // Asegura que el ID sea numérico
-      if (isNaN(avisoId)) {
-        throw new Error("ID de aviso inválido.");
-      }
+    if (!authToken || !id) return;
 
-      const response = await fetch(`${API_BASE_URL}/avisos/${avisoId}`, {
+    try {
+      const response = await fetch(`${API_BASE_URL}/avisos/${id}`, {
         headers: {
-          'Authorization': `Bearer ${authToken}`, // ¡IMPORTANTE! Envía el token de autenticación
+          'Authorization': `Bearer ${authToken}`,
         },
       });
       if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error("Aviso no encontrado.");
-        }
-        if (response.status === 401) {
-          throw new Error("No autorizado. Por favor, inicie sesión.");
-        }
-        if (response.status === 403) {
-          throw new Error("Acceso denegado. No tiene los permisos necesarios para ver este aviso.");
-        }
-        throw new Error(`Error al cargar el aviso: ${response.statusText}`);
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al cargar aviso: ${response.statusText}`);
       }
       const data = await response.json();
       setAviso(data);
     } catch (err) {
-      console.error("Error al obtener aviso:", err);
-      setError(err.message || "No se pudo cargar la información del aviso.");
+      console.error("Error fetching aviso:", err);
+      setError(err.message || "No se pudo cargar el detalle del aviso.");
     } finally {
       setLoading(false);
     }
-  }, [id, authToken]); // Vuelve a ejecutar cuando el ID o el token cambien
+  }, [id, authToken]);
 
-  // Efecto para cargar los datos al montar el componente o cuando el ID/token cambia
   useEffect(() => {
-    if (id && authToken) {
-      fetchAviso();
-    } else if (!authToken) {
+    if (!authToken) {
       setLoading(false);
-      setError("Necesita iniciar sesión para ver los detalles del aviso.");
-    } else {
-      setLoading(false);
-      setError("No se especificó un ID de aviso.");
-    }
-  }, [id, authToken, fetchAviso]);
-
-  // Función auxiliar para formatear fechas
-  const formatDateTime = (isoString) => {
-    if (!isoString) return 'N/A';
-    const options = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    return new Date(isoString).toLocaleDateString('es-ES', options);
-  };
-
-  // Función para manejar la eliminación de un aviso
-  const handleEliminarAviso = async () => {
-    if (!window.confirm('¿Está seguro de que desea eliminar este aviso? Esta acción es irreversible.')) {
+      setError("No autenticado. Por favor, inicie sesión.");
       return;
     }
+    fetchAviso();
+  }, [authToken, fetchAviso]);
+
+  const handleDelete = async () => {
+    setLoading(true);
+    setError(null);
+    setDeleteMessage(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/avisos/${aviso.id}`, {
+      const response = await fetch(`${API_BASE_URL}/avisos/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${authToken}`, // Envía el token
+          'Authorization': `Bearer ${authToken}`,
         },
       });
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("No autorizado para eliminar avisos. Por favor, inicie sesión.");
-        }
-        if (response.status === 403) {
-          throw new Error("Acceso denegado. No tiene los permisos necesarios para eliminar avisos.");
-        }
-        throw new Error(`Error al eliminar aviso: ${response.statusText}`);
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al eliminar aviso: ${response.statusText}`);
       }
 
-      alert('Aviso eliminado con éxito.');
-      navigate('/avisos'); // Redirige a la lista de avisos
+      setDeleteMessage("Aviso eliminado exitosamente.");
+      setTimeout(() => {
+        navigate('/avisos'); // Redirigir a la lista después de eliminar
+      }, 1500);
+
     } catch (err) {
-      console.error("Error al eliminar aviso:", err);
+      console.error("Error deleting aviso:", err);
       setError(err.message || "No se pudo eliminar el aviso.");
+      setLoading(false);
+    }
+  };
+
+  const handleAcuseRecibo = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/avisos/${id}/acuse_recibo`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ analista_id: user.id }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al registrar acuse de recibo: ${response.statusText}`);
+      }
+
+      setAviso(prev => ({
+        ...prev,
+        acuses_recibo: [...(prev.acuses_recibo || []), { analista: { id: user.id, nombre: user.nombre, apellido: user.apellido }, fecha_acuse: new Date().toISOString() }]
+      }));
+      alert("Acuse de recibo registrado exitosamente."); // Usar un modal personalizado en lugar de alert en producción
+    } catch (err) {
+      console.error("Error registering acuse de recibo:", err);
+      setError(err.message || "No se pudo registrar el acuse de recibo.");
+    } finally {
+      setLoading(false);
     }
   };
 
   if (loading) {
     return (
-      <div className="container mt-4 text-center">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Cargando aviso...</span>
-        </div>
-        <p>Cargando detalles del aviso...</p>
-      </div>
+      <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
+        <Spinner animation="border" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </Spinner>
+        <p className="ms-3 text-muted">Cargando detalle del aviso...</p>
+      </Container>
     );
   }
 
   if (error) {
     return (
-      <div className="container mt-4">
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-        {!authToken && (
-          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
-        )}
-        <Link to="/avisos" className="btn btn-secondary mt-3">Volver a Avisos</Link>
-      </div>
+      <Container className="mt-4">
+        <Alert variant="danger">
+          <Alert.Heading>¡Error!</Alert.Heading>
+          <p>{error}</p>
+          <Button variant="primary" onClick={() => navigate('/avisos')}>Volver a Avisos</Button>
+        </Alert>
+      </Container>
     );
   }
 
   if (!aviso) {
     return (
-      <div className="container mt-4">
-        <div className="alert alert-warning" role="alert">
-          El aviso no pudo ser cargado o no existe.
-        </div>
-        <Link to="/avisos" className="btn btn-secondary mt-3">Volver a Avisos</Link>
-      </div>
+      <Container className="mt-4">
+        <Alert variant="info">
+          <Alert.Heading>Aviso no encontrado</Alert.Heading>
+          <p>El aviso que intentas ver no existe o no tienes permiso para acceder a él.</p>
+          <Button variant="primary" onClick={() => navigate('/avisos')}>Volver a Avisos</Button>
+        </Alert>
+      </Container>
     );
   }
 
-  return (
-    <div className="container mt-4">
-      <h3>Detalles del Aviso: {aviso.titulo}</h3>
-      <hr />
-      <p><strong>ID:</strong> {aviso.id}</p>
-      <p><strong>Título:</strong> {aviso.titulo}</p>
-      <p><strong>Contenido:</strong> {aviso.contenido || 'N/A'}</p>
-      <p><strong>Creador ID:</strong> {aviso.creador_id}</p>
-      <p><strong>Campaña ID:</strong> {aviso.campana_id || 'N/A'}</p>
-      <p><strong>Fecha de Vencimiento:</strong> {formatDateTime(aviso.fecha_vencimiento)}</p>
-      <p><strong>Fecha de Creación:</strong> {formatDateTime(aviso.fecha_creacion)}</p>
+  const canEdit = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
+  const canDelete = user && user.role === 'SUPERVISOR';
+  const hasAcknowledged = user && aviso.acuses_recibo.some(ar => ar.analista.id === user.id);
 
-      <div className="mt-4">
-        <Link to="/avisos" className="btn btn-secondary me-2">Volver a la lista de Avisos</Link>
-        {user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
-          <Link to={`/avisos/editar/${aviso.id}`} className="btn btn-warning me-2">Editar Aviso</Link>
-        )}
-        {user && user.role === 'SUPERVISOR' && (
-          <button onClick={handleEliminarAviso} className="btn btn-danger">Eliminar Aviso</button>
-        )}
-      </div>
-    </div>
+  return (
+    <Container className="py-5">
+      <Card className="shadow-sm">
+        <Card.Header as="h2" className="bg-info text-white text-center">
+          Detalle del Aviso
+        </Card.Header>
+        <Card.Body>
+          {deleteMessage && <Alert variant="success">{deleteMessage}</Alert>}
+          
+          <p><strong>Título:</strong> {aviso.titulo}</p>
+          <p><strong>Contenido:</strong> {aviso.contenido}</p>
+          <p><strong>Fecha de Creación:</strong> {new Date(aviso.fecha_creacion).toLocaleString()}</p>
+          <p>
+            <strong>Fecha de Vencimiento:</strong>{' '}
+            {aviso.fecha_vencimiento ? new Date(aviso.fecha_vencimiento).toLocaleString() : 'N/A'}
+          </p>
+          <p>
+            <strong>Creador:</strong>{' '}
+            {aviso.creador ? `${aviso.creador.nombre} ${aviso.creador.apellido}` : 'N/A'}
+          </p>
+          <p>
+            <strong>Campaña Asociada:</strong>{' '}
+            {aviso.campana ? <Link to={`/campanas/${aviso.campana.id}`}>{aviso.campana.nombre}</Link> : 'N/A'}
+          </p>
+
+          <h5 className="mt-4">Acuses de Recibo:</h5>
+          {aviso.acuses_recibo && aviso.acuses_recibo.length > 0 ? (
+            <ListGroup>
+              {aviso.acuses_recibo.map(acuse => (
+                <ListGroup.Item key={acuse.id}>
+                  {acuse.analista ? `${acuse.analista.nombre} ${acuse.analista.apellido}` : 'Analista Desconocido'} -{' '}
+                  {new Date(acuse.fecha_acuse).toLocaleString()}
+                </ListGroup.Item>
+              ))}
+            </ListGroup>
+          ) : (
+            <p className="text-muted fst-italic">No hay acuses de recibo para este aviso.</p>
+          )}
+
+          <div className="d-flex justify-content-between mt-4">
+            <Button variant="secondary" onClick={() => navigate('/avisos')}>
+              Volver a la Lista
+            </Button>
+
+            <div>
+              {user && user.role === 'ANALISTA' && !hasAcknowledged && (
+                <Button variant="info" onClick={handleAcuseRecibo} className="me-2" disabled={loading}>
+                  Registrar Acuse de Recibo
+                </Button>
+              )}
+              {user && user.role === 'ANALISTA' && hasAcknowledged && (
+                <Button variant="outline-info" disabled>
+                  Acuse de Recibo Registrado
+                </Button>
+              )}
+              
+              {canEdit && (
+                <Button variant="warning" onClick={() => navigate(`/avisos/editar/${aviso.id}`)} className="me-2">
+                  Editar
+                </Button>
+              )}
+              {canDelete && (
+                <Button variant="danger" onClick={() => setShowDeleteConfirm(true)}>
+                  Eliminar
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {showDeleteConfirm && (
+            <Alert variant="danger" className="mt-3">
+              <Alert.Heading>Confirmar Eliminación</Alert.Heading>
+              <p>¿Estás seguro de que quieres eliminar este aviso? Esta acción es irreversible.</p>
+              <Button variant="danger" onClick={handleDelete} className="me-2" disabled={loading}>
+                Sí, Eliminar
+              </Button>
+              <Button variant="secondary" onClick={() => setShowDeleteConfirm(false)} disabled={loading}>
+                Cancelar
+              </Button>
+            </Alert>
+          )}
+        </Card.Body>
+      </Card>
+    </Container>
   );
 }
 
