@@ -1,5 +1,5 @@
 iniciar backend
-uvicorn main:app --reload --port 8001
+uvicorn main:app --reload --port 8002
 
 para mostrar en la web:
 http://127.0.0.1:8001

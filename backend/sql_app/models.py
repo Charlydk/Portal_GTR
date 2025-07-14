@@ -87,7 +87,8 @@ class Tarea(Base):
     titulo = Column(String, index=True)
     descripcion = Column(String, nullable=True)
     fecha_vencimiento = Column(DateTime(timezone=True), nullable=True)
-    progreso = Column(Enum(ProgresoTarea), default=ProgresoTarea.PENDIENTE)
+    # MODIFICACIÓN CLAVE AQUÍ: native_enum=False
+    progreso = Column(Enum(ProgresoTarea, values_callable=lambda x: [e.value for e in x], native_enum=False), default=ProgresoTarea.PENDIENTE)
     fecha_creacion = Column(DateTime(timezone=True), server_default=func.now())
 
     analista_id = Column(Integer, ForeignKey("analistas.id"))

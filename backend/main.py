@@ -31,6 +31,9 @@ from database import get_db, engine
 # Importa las utilidades de seguridad
 from security import verify_password, get_password_hash, create_access_token, decode_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 
+# Importa los errores de SQLAlchemy para un mejor manejo
+from sqlalchemy.exc import ProgrammingError
+
 app = FastAPI(
     title="Portal GTR API",
     description="API para la gestión de analistas, campañas, tareas, avisos y acuses de recibo."
@@ -133,9 +136,32 @@ async def register_analista(analista: AnalistaCreate, db: AsyncSession = Depends
         role=analista.role
     )
     db.add(db_analista)
-    await db.commit()
-    await db.refresh(db_analista)
-    return db_analista
+    try:
+        await db.commit()
+        await db.refresh(db_analista)
+        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        result = await db.execute(
+            select(models.Analista)
+            .filter(models.Analista.id == db_analista.id)
+            .options(selectinload(models.Analista.campanas_asignadas))
+        )
+        analista_to_return = result.scalars().first()
+        if not analista_to_return:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después del registro.")
+        return analista_to_return
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al registrar analista: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al registrar analista: {e}"
+        )
+
 
 @app.post("/token", response_model=Token, summary="Obtener Token de Acceso (Login)")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
@@ -212,9 +238,31 @@ async def crear_analista(
         role=analista.role
     )
     db.add(db_analista)
-    await db.commit()
-    await db.refresh(db_analista)
-    return db_analista
+    try:
+        await db.commit()
+        await db.refresh(db_analista)
+        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        result = await db.execute(
+            select(models.Analista)
+            .filter(models.Analista.id == db_analista.id)
+            .options(selectinload(models.Analista.campanas_asignadas))
+        )
+        analista_to_return = result.scalars().first()
+        if not analista_to_return:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la creación.")
+        return analista_to_return
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al crear analista: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear analista: {e}"
+        )
 
 
 @app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas Activos (Protegido por Supervisor/Responsable)")
@@ -330,9 +378,32 @@ async def actualizar_analista(
             continue
         setattr(analista_existente, key, value)
 
-    await db.commit()
-    await db.refresh(analista_existente)
-    return analista_existente
+    try:
+        await db.commit()
+        await db.refresh(analista_existente)
+        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        result = await db.execute(
+            select(models.Analista)
+            .filter(models.Analista.id == analista_existente.id)
+            .options(selectinload(models.Analista.campanas_asignadas))
+        )
+        analista_to_return = result.scalars().first()
+        if not analista_to_return:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la actualización.")
+        
+        return analista_to_return
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al actualizar analista: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al actualizar analista: {e}"
+        )
 
 @app.put("/analistas/{analista_id}/password", response_model=Analista, summary="Actualizar contraseña de un Analista (Protegido)")
 async def update_analista_password(
@@ -350,7 +421,7 @@ async def update_analista_password(
     db_analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
     analista_a_actualizar = db_analista_result.scalars().first()
 
-    if analista_a_actualizar is None: # CORREGIDO: Usar 'is None' en Python
+    if analista_a_actualizar is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
     if current_analista.role == UserRole.ANALISTA and current_analista.id != analista_id:
@@ -362,9 +433,31 @@ async def update_analista_password(
     hashed_password = get_password_hash(password_update.new_password)
     analista_a_actualizar.hashed_password = hashed_password
 
-    await db.commit()
-    await db.refresh(analista_a_actualizar)
-    return analista_a_actualizar
+    try:
+        await db.commit()
+        await db.refresh(analista_a_actualizar) # Refrescar el objeto después del commit
+        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        result = await db.execute(
+            select(models.Analista)
+            .filter(models.Analista.id == analista_a_actualizar.id)
+            .options(selectinload(models.Analista.campanas_asignadas))
+        )
+        analista_to_return = result.scalars().first()
+        if not analista_to_return:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la actualización de contraseña.")
+        return analista_to_return
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al actualizar contraseña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al actualizar contraseña: {e}"
+        )
 
 
 @app.delete("/analistas/{analista_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desactivar un Analista (Protegido por Supervisor)")
@@ -389,7 +482,20 @@ async def desactivar_analista(
 
     analista_a_desactivar.esta_activo = False
     
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al desactivar analista: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al desactivar analista: {e}"
+        )
     await db.refresh(analista_a_desactivar)
 
     return
@@ -425,7 +531,20 @@ async def asignar_campana_a_analista(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La campaña ya está asignada a este analista.")
 
     analista.campanas_asignadas.append(campana)
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al asignar campaña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al asignar campaña: {e}"
+        )
     await db.refresh(analista)
     return analista
 
@@ -458,7 +577,20 @@ async def desasignar_campana_de_analista(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La campaña no está asignada a este analista.")
 
     analista.campanas_asignadas.remove(campana)
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al desasignar campaña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al desasignar campaña: {e}"
+        )
     return
 
 # --- Endpoints para Campañas (Protegidos) ---
@@ -475,8 +607,24 @@ async def crear_campana(
     """
     db_campana = models.Campana(**campana.model_dump())
     db.add(db_campana)
-    await db.commit()
-    await db.refresh(db_campana)
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al crear campaña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear campaña: {e}"
+        )
+    await db.refresh(db_campana) # Refresca el objeto para obtener su ID
+
+    # Forzar la carga de relaciones antes de la serialización de Pydantic
+    await db.refresh(db_campana, attribute_names=["analistas_asignados"])
     return db_campana
 
 
@@ -535,9 +683,32 @@ async def actualizar_campana(
     for key, value in campana_data.items():
         setattr(campana_existente, key, value)
 
-    await db.commit()
-    await db.refresh(campana_existente)
-    return campana_existente
+    try:
+        await db.commit()
+        await db.refresh(campana_existente) # Refrescar el objeto después del commit
+        # Forzar la carga de relaciones para la respuesta
+        result = await db.execute(
+            select(models.Campana)
+            .filter(models.Campana.id == campana_existente.id)
+            .options(selectinload(models.Campana.analistas_asignados))
+        )
+        campana_to_return = result.scalars().first()
+        if not campana_to_return:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la campaña después de la actualización.")
+        
+        return campana_to_return
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al actualizar campaña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al actualizar campaña: {e}"
+        )
 
 
 @app.delete("/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Campaña (Protegido por Supervisor)")
@@ -556,8 +727,21 @@ async def eliminar_campana(
     if campana_a_eliminar is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada")
 
-    await db.delete(campana_a_eliminar)
-    await db.commit()
+    try:
+        await db.delete(campana_a_eliminar)
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al eliminar campaña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al eliminar campaña: {e}"
+        )
     return
 
 
@@ -583,17 +767,41 @@ async def crear_tarea(
     if not campana_existente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Campaña con ID {tarea.campana_id} no encontrada.")
 
-    db_tarea = models.Tarea(**tarea.model_dump())
+    # Convertir el Pydantic Enum a su valor de cadena antes de pasarlo al modelo SQLAlchemy
+    tarea_data_dict = tarea.model_dump()
+    tarea_data_dict["progreso"] = tarea_data_dict["progreso"].value
+
+    db_tarea = models.Tarea(
+        **tarea_data_dict
+    )
     db.add(db_tarea)
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al crear tarea: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear tarea: {e}"
+        )
     await db.refresh(db_tarea)
 
-    await db.execute(
+    # Forzar la carga de relaciones para la respuesta
+    result = await db.execute(
         select(models.Tarea)
-        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana))
+        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana), selectinload(models.Tarea.checklist_items))
         .filter(models.Tarea.id == db_tarea.id)
     )
-    return db_tarea
+    tarea_to_return = result.scalars().first()
+    if not tarea_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la tarea después de la creación.")
+    
+    return tarea_to_return
 
 
 @app.get("/tareas/", response_model=List[Tarea], summary="Obtener Tareas (con filtros opcionales) (Protegido)")
@@ -646,6 +854,7 @@ async def obtener_tarea_por_id(
         )
     )
     tarea = result.scalars().first()
+    
     if not tarea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada.")
     
@@ -669,30 +878,67 @@ async def actualizar_tarea(
     db_tarea_result = await db.execute(
         select(models.Tarea)
         .filter(models.Tarea.id == tarea_id)
-        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana))
+        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana), selectinload(models.Tarea.checklist_items))
     )
     tarea_existente = db_tarea_result.scalars().first()
 
     if tarea_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
 
-    if tarea_update.analista_id != tarea_existente.analista_id:
-        analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea_update.analista_id))
-        if analista_result.scalars().first() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {tarea_update.analista_id} no encontrado.")
-    
-    if tarea_update.campana_id != tarea_existente.campana_id:
-        campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == tarea_update.campana_id))
-        if campana_result.scalars().first() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nueva Campaña con ID {tarea_update.campana_id} no encontrada.")
+    # Crear un diccionario con los datos a actualizar, excluyendo los no seteados
+    update_data = tarea_update.model_dump(exclude_unset=True)
 
-    tarea_data = tarea_update.model_dump(exclude_unset=True)
-    for key, value in tarea_data.items():
+    # Manejar 'progreso' específicamente para asegurar que sea el valor de cadena
+    if "progreso" in update_data:
+        tarea_existente.progreso = update_data["progreso"].value
+        del update_data["progreso"] # Eliminar del diccionario para evitar doble procesamiento
+
+    # Actualizar analista_id si ha cambiado
+    if "analista_id" in update_data and update_data["analista_id"] != tarea_existente.analista_id:
+        analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == update_data["analista_id"]))
+        if analista_result.scalars().first() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {update_data['analista_id']} no encontrado.")
+        tarea_existente.analista_id = update_data["analista_id"]
+        del update_data["analista_id"] # Eliminar del diccionario
+
+    # Actualizar campana_id si ha cambiado
+    if "campana_id" in update_data and update_data["campana_id"] != tarea_existente.campana_id:
+        campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == update_data["campana_id"]))
+        if campana_result.scalars().first() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nueva Campaña con ID {update_data['campana_id']} no encontrada.")
+        tarea_existente.campana_id = update_data["campana_id"]
+        del update_data["campana_id"] # Eliminar del diccionario
+
+    # Actualizar el resto de los campos
+    for key, value in update_data.items():
         setattr(tarea_existente, key, value)
 
-    await db.commit()
-    await db.refresh(tarea_existente)
-    return tarea_existente
+    try:
+        await db.commit()
+        await db.refresh(tarea_existente) # Refrescar el objeto después del commit
+        # Forzar la carga de relaciones para la respuesta
+        result = await db.execute(
+            select(models.Tarea)
+            .filter(models.Tarea.id == tarea_existente.id)
+            .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana), selectinload(models.Tarea.checklist_items))
+        )
+        tarea_to_return = result.scalars().first()
+        if not tarea_to_return:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la tarea después de la actualización.")
+        
+        return tarea_to_return
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al actualizar tarea: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al actualizar tarea: {e}"
+        )
 
 
 @app.delete("/tareas/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea (Protegido por Supervisor)")
@@ -711,8 +957,21 @@ async def eliminar_tarea(
     if tarea_a_eliminar is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
 
-    await db.delete(tarea_a_eliminar)
-    await db.commit()
+    try:
+        await db.delete(tarea_a_eliminar)
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al eliminar tarea: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al eliminar tarea: {e}"
+        )
     return
 
 
@@ -734,7 +993,20 @@ async def crear_checklist_item(
 
     db_item = models.ChecklistItem(**item.model_dump())
     db.add(db_item)
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al crear checklist item: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear checklist item: {e}"
+        )
     await db.refresh(db_item)
     return db_item
 
@@ -810,7 +1082,20 @@ async def actualizar_checklist_item(
     item_existente.descripcion = item_update.descripcion
     item_existente.completado = item_update.completado
 
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al actualizar checklist item: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al actualizar checklist item: {e}"
+        )
     await db.refresh(item_existente)
     return item_existente
 
@@ -830,8 +1115,21 @@ async def eliminar_checklist_item(
     if item_a_eliminar is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ChecklistItem no encontrado")
 
-    await db.delete(item_a_eliminar)
-    await db.commit()
+    try:
+        await db.delete(item_a_eliminar)
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al eliminar checklist item: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al eliminar checklist item: {e}"
+        )
     return
 
 
@@ -857,15 +1155,33 @@ async def crear_comentario_campana(
 
     db_comentario = models.ComentarioCampana(**comentario.model_dump())
     db.add(db_comentario)
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al crear comentario de campaña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear comentario de campaña: {e}"
+        )
     await db.refresh(db_comentario)
 
-    await db.execute(
+    # Forzar la carga de relaciones para la respuesta
+    result = await db.execute(
         select(models.ComentarioCampana)
         .options(selectinload(models.ComentarioCampana.analista))
         .filter(models.ComentarioCampana.id == db_comentario.id)
     )
-    return db_comentario
+    comentario_to_return = result.scalars().first()
+    if not comentario_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el comentario después de la creación.")
+    
+    return comentario_to_return
 
 
 @app.get("/comentarios_campana/", response_model=List[ComentarioCampana], summary="Obtener Comentarios de Campaña (con filtros opcionales) (Protegido)")
@@ -907,8 +1223,21 @@ async def eliminar_comentario_campana(
     if comentario_a_eliminar is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comentario de Campaña no encontrado.")
 
-    await db.delete(comentario_a_eliminar)
-    await db.commit()
+    try:
+        await db.delete(comentario_a_eliminar)
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al eliminar comentario de campaña: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al eliminar comentario de campaña: {e}"
+        )
     return
 
 
@@ -935,11 +1264,23 @@ async def crear_aviso(
 
     db_aviso = models.Aviso(**aviso.model_dump())
     db.add(db_aviso)
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al crear aviso: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear aviso: {e}"
+        )
     await db.refresh(db_aviso)
 
     # Forzar la carga de relaciones antes de la serialización de Pydantic
-    # Esto es crucial para evitar MissingGreenlet en la respuesta POST
     await db.refresh(db_aviso, attribute_names=["creador", "campana", "acuses_recibo"])
 
     return db_aviso
@@ -1040,7 +1381,7 @@ async def actualizar_aviso(
     if aviso_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
 
-    if aviso_update.creador_id != aviso_existente.creador_id:
+    if aviso_update.creador_id is not None and aviso_update.creador_id != aviso_existente.creador_id:
         nuevo_creador_result = await db.execute(select(models.Analista).where(models.Analista.id == aviso_update.creador_id))
         if nuevo_creador_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nuevo Analista creador no encontrado para reasignar el Aviso.")
@@ -1059,12 +1400,25 @@ async def actualizar_aviso(
         if key not in ['creador_id', 'campana_id']:
             setattr(aviso_existente, key, value)
 
-    await db.commit()
-    await db.refresh(aviso_existente)
-
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al actualizar aviso: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al actualizar aviso: {e}"
+        )
+    
+    # Recargar el aviso con sus relaciones para la respuesta
     updated_aviso_result = await db.execute(
         select(models.Aviso)
-        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana), selectinload(models.Aviso.acuses_recibo)) # Cargar acuses de recibo
+        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana), selectinload(models.Aviso.acuses_recibo))
         .filter(models.Aviso.id == aviso_id)
     )
     updated_aviso = updated_aviso_result.scalars().first()
@@ -1090,8 +1444,21 @@ async def eliminar_aviso(
     if aviso_a_eliminar is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
 
-    await db.delete(aviso_a_eliminar)
-    await db.commit()
+    try:
+        await db.delete(aviso_a_eliminar)
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al eliminar aviso: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al eliminar aviso: {e}"
+        )
     return
 
 
@@ -1137,10 +1504,24 @@ async def registrar_acuse_recibo(
 
     db_acuse = models.AcuseReciboAviso(aviso_id=aviso_id, analista_id=analista_id)
     db.add(db_acuse)
-    await db.commit()
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al registrar acuse de recibo: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al registrar acuse de recibo: {e}"
+        )
     await db.refresh(db_acuse)
 
-    await db.execute(
+    # Forzar la carga de relaciones para la respuesta
+    result = await db.execute(
         select(models.AcuseReciboAviso)
         .options(
             selectinload(models.AcuseReciboAviso.analista),
@@ -1149,7 +1530,11 @@ async def registrar_acuse_recibo(
         )
         .filter(models.AcuseReciboAviso.id == db_acuse.id)
     )
-    return db_acuse
+    acuse_to_return = result.scalars().first()
+    if not acuse_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el acuse de recibo después de la creación.")
+    
+    return acuse_to_return
 
 @app.get("/avisos/{aviso_id}/acuses_recibo", response_model=List[AcuseReciboAviso], summary="Obtener acuses de recibo para un Aviso (Protegido)")
 async def obtener_acuses_recibo_por_aviso(
