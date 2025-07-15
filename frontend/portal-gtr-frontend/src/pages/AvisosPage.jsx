@@ -51,7 +51,9 @@ function AvisosPage() {
 
   // Función para manejar la eliminación de un aviso
   const handleEliminarAviso = async (avisoId) => {
-    if (!window.confirm('¿Está seguro de que desea eliminar este aviso? Esta acción es irreversible.')) {
+    // Usar un modal personalizado en lugar de window.confirm
+    const confirmed = window.confirm('¿Está seguro de que desea eliminar este aviso? Esta acción es irreversible.');
+    if (!confirmed) {
       return;
     }
     try {
@@ -72,11 +74,12 @@ function AvisosPage() {
         throw new Error(`Error al eliminar aviso: ${response.statusText}`);
       }
 
+      // Usar un modal personalizado en lugar de alert
       alert('Aviso eliminado con éxito.');
       fetchAvisos(); // Recargar la lista de avisos
     } catch (err) {
       console.error("Error al eliminar aviso:", err);
-      setError(err.message || "No se pudo eliminar el aviso.");
+      alert(err.message || "No se pudo eliminar el aviso."); // Usar alert temporalmente
     }
   };
 
@@ -136,12 +139,13 @@ function AvisosPage() {
           </thead>
           <tbody>
             {avisos.map((aviso) => (
-              <tr key={aviso.id}>
+              <tr key={aviso.id}> {/* Línea 139 en tu código original */}
                 <td>{aviso.id}</td>
                 <td>{aviso.titulo}</td>
                 <td>{aviso.contenido.substring(0, 50)}{aviso.contenido.length > 50 ? '...' : ''}</td>
-                <td>{aviso.creador_id || 'N/A'}</td> {/* Aquí necesitarías cargar el nombre del creador si lo tienes en el backend */}
-                <td>{aviso.campana_id || 'N/A'}</td> {/* Aquí necesitarías cargar el nombre de la campaña si lo tienes en el backend */}
+                {/* Mostrar nombre del creador y campaña si están disponibles */}
+                <td>{aviso.creador ? `${aviso.creador.nombre} ${aviso.creador.apellido}` : aviso.creador_id || 'N/A'}</td>
+                <td>{aviso.campana ? aviso.campana.nombre : aviso.campana_id || 'N/A'}</td>
                 <td>{aviso.fecha_vencimiento ? formatDateTime(aviso.fecha_vencimiento) : 'N/A'}</td>
                 <td>
                   <Link to={`/avisos/${aviso.id}`} className="btn btn-info btn-sm me-2">Ver</Link>
@@ -159,6 +163,7 @@ function AvisosPage() {
                     </button>
                   )}
                 </td>
+                {/* ELIMINADO: {" "} que causaba el error de hidratación */}
               </tr>
             ))}
           </tbody>

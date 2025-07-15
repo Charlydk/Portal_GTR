@@ -14,15 +14,15 @@ from sql_app.models import UserRole # Importa el Enum UserRole
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
-    Token, TokenData, # Modelos de autenticación al principio
+    Token, TokenData,
     ProgresoTarea, UserRole,
-    AnalistaBase, Analista, AnalistaCreate, PasswordUpdate,
-    CampanaBase, Campana, CampanaSimple, # Importa CampanaSimple para la asignación
-    TareaBase, Tarea,
+    AnalistaBase, Analista, AnalistaCreate, PasswordUpdate, AnalistaMe,
+    CampanaBase, Campana, CampanaSimple,
+    TareaBase, Tarea, TareaSimple, TareaListOutput,
     ChecklistItemBase, ChecklistItem, ChecklistItemSimple,
     ComentarioCampanaBase, ComentarioCampana, ComentarioCampanaSimple,
-    AvisoBase, Aviso, AvisoSimple,
-    AcuseReciboAvisoBase, AcuseReciboAviso, AcuseReciboCreate, AcuseReciboAvisoSimple
+    AvisoBase, Aviso, AvisoSimple, AvisoListOutput, # ¡AvisoListOutput agregado!
+    AcuseReciboAviso, AcuseReciboCreate, AcuseReciboAvisoSimple
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -41,16 +41,19 @@ app = FastAPI(
 
 # Configuración de CORS
 origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+    "http://localhost",
+    "http://localhost:3000", # Si tu frontend corre en 3000
+    "http://localhost:5173", # El puerto que reporta tu error
+    "http://127.0.0.1:5173", # Otra posible dirección local del frontend
+    "http://127.0.0.1:8000", # Si tu frontend se sirve desde el mismo servidor en otro puerto
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"], # Permite todos los métodos (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"], # Permite todos los encabezados
 )
 
 # OAuth2PasswordBearer para manejar tokens en los headers
@@ -65,7 +68,7 @@ async def startup_event():
 # --- Funciones de Utilidad para Autenticación ---
 
 async def get_analista_by_email(email: str, db: AsyncSession) -> Optional[models.Analista]:
-    """Obtiene un analista por su email."""
+    """Obtiene un analista por su email. No carga relaciones aquí."""
     result = await db.execute(select(models.Analista).filter(models.Analista.email == email))
     return result.scalars().first()
 
@@ -88,9 +91,10 @@ async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSes
             raise credentials_exception
         
         token_data = TokenData(email=email)
-    except Exception: # Usar Exception general para capturar JWTError y otros posibles errores de decodificación
+    except Exception:
         raise credentials_exception
     
+    # Aquí no cargamos relaciones, solo el objeto Analista básico
     analista = await get_analista_by_email(token_data.email, db)
     if analista is None:
         raise credentials_exception
@@ -139,11 +143,17 @@ async def register_analista(analista: AnalistaCreate, db: AsyncSession = Depends
     try:
         await db.commit()
         await db.refresh(db_analista)
-        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        # Cargar explícitamente las relaciones para la respuesta COMPLETA
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == db_analista.id)
-            .options(selectinload(models.Analista.campanas_asignadas))
+            .options(
+                selectinload(models.Analista.campanas_asignadas),
+                selectinload(models.Analista.tareas),
+                selectinload(models.Analista.comentarios_campana),
+                selectinload(models.Analista.avisos_creados),
+                selectinload(models.Analista.acuses_recibo_dados)
+            )
         )
         analista_to_return = result.scalars().first()
         if not analista_to_return:
@@ -189,22 +199,14 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/users/me/", response_model=Analista, summary="Obtener información del Analista actual")
+@app.get("/users/me/", response_model=AnalistaMe, summary="Obtener información del Analista actual (Optimizado)")
 async def read_users_me(current_analista: models.Analista = Depends(get_current_analista), db: AsyncSession = Depends(get_db)):
     """
-    Obtiene la información del analista que actualmente ha iniciado sesión.
-    Requiere autenticación.
+    Obtiene la información básica del analista que actualmente ha iniciado sesión.
+    Requiere autenticación. No carga relaciones anidadas para optimizar el rendimiento.
     """
-    # Cargar las campañas asignadas al analista actual
-    result = await db.execute(
-        select(models.Analista)
-        .filter(models.Analista.id == current_analista.id)
-        .options(selectinload(models.Analista.campanas_asignadas))
-    )
-    analista_with_campaigns = result.scalars().first()
-    if not analista_with_campaigns:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
-    return analista_with_campaigns
+    await db.refresh(current_analista)
+    return current_analista
 
 
 # --- Endpoints para Analistas (Protegidos) ---
@@ -241,11 +243,17 @@ async def crear_analista(
     try:
         await db.commit()
         await db.refresh(db_analista)
-        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        # Cargar explícitamente las relaciones para la respuesta COMPLETA
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == db_analista.id)
-            .options(selectinload(models.Analista.campanas_asignadas))
+            .options(
+                selectinload(models.Analista.campanas_asignadas),
+                selectinload(models.Analista.tareas),
+                # selectinload(models.Analista.comentarios_campana), # ELIMINADO: Esta relación no existe en el modelo Analista
+                selectinload(models.Analista.avisos_creados),
+                selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+            )
         )
         analista_to_return = result.scalars().first()
         if not analista_to_return:
@@ -264,7 +272,6 @@ async def crear_analista(
             detail=f"Error inesperado al crear analista: {e}"
         )
 
-
 @app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas Activos (Protegido por Supervisor/Responsable)")
 async def obtener_analistas(
     db: AsyncSession = Depends(get_db),
@@ -274,8 +281,16 @@ async def obtener_analistas(
     Obtiene la lista de todos los analistas **activos** desde la base de datos.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
-    result = await db.execute(select(models.Analista).where(models.Analista.esta_activo == True).options(selectinload(models.Analista.campanas_asignadas)))
-    analistas = result.scalars().unique().all() # Usar unique() para evitar duplicados si hay relaciones many-to-many
+    query = select(models.Analista)
+    query = query.options(
+        selectinload(models.Analista.campanas_asignadas),
+        selectinload(models.Analista.tareas),
+        selectinload(models.Analista.avisos_creados),
+        selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ! De 'acuses_recibo_dados' a 'acuses_recibo_avisos'
+    )
+    query = query.where(models.Analista.esta_activo == True)
+    result = await db.execute(query)
+    analistas = result.scalars().unique().all()
     return analistas
 
 
@@ -293,7 +308,12 @@ async def obtener_analista_por_id(
     result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.id == analista_id, models.Analista.esta_activo == True)
-        .options(selectinload(models.Analista.campanas_asignadas)) # Cargar las campañas asignadas
+        .options(
+            selectinload(models.Analista.campanas_asignadas),
+            selectinload(models.Analista.tareas),
+            selectinload(models.Analista.avisos_creados),
+            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+        )
     )
     analista = result.scalars().first()
     if not analista:
@@ -315,7 +335,12 @@ async def get_all_analistas(
     Obtiene una lista de todos los analistas, incluyendo inactivos si `include_inactive` es True.
     Requiere autenticación y rol de SUPERVISOR.
     """
-    query = select(models.Analista).options(selectinload(models.Analista.campanas_asignadas))
+    query = select(models.Analista).options(
+        selectinload(models.Analista.campanas_asignadas),
+        selectinload(models.Analista.tareas),
+        selectinload(models.Analista.avisos_creados),
+        selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+    )
     if not include_inactive:
         query = query.where(models.Analista.esta_activo == True)
     result = await db.execute(query)
@@ -336,7 +361,12 @@ async def obtener_analista_por_bms_id(
     result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.bms_id == bms_id, models.Analista.esta_activo == True)
-        .options(selectinload(models.Analista.campanas_asignadas))
+        .options(
+            selectinload(models.Analista.campanas_asignadas),
+            selectinload(models.Analista.tareas),
+            selectinload(models.Analista.avisos_creados),
+            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+        )
     )
     analista = result.scalars().first()
     if not analista:
@@ -346,6 +376,7 @@ async def obtener_analista_por_bms_id(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este perfil de analista.")
 
     return analista
+
 
 @app.put("/analistas/{analista_id}", response_model=Analista, summary="Actualizar un Analista existente (Protegido por Supervisor/Responsable)")
 async def actualizar_analista(
@@ -369,7 +400,7 @@ async def actualizar_analista(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede editar perfiles de Analistas normales.")
     
     if current_analista.role == UserRole.ANALISTA:
-         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Los analistas no pueden usar este endpoint para actualizar su perfil.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Los analistas no pueden usar este endpoint para actualizar su perfil.")
 
 
     analista_data = analista_update.model_dump(exclude_unset=True)
@@ -381,11 +412,17 @@ async def actualizar_analista(
     try:
         await db.commit()
         await db.refresh(analista_existente)
-        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        # Cargar explícitamente las relaciones para la respuesta COMPLETA
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == analista_existente.id)
-            .options(selectinload(models.Analista.campanas_asignadas))
+            .options(
+                selectinload(models.Analista.campanas_asignadas),
+                selectinload(models.Analista.tareas),
+                # selectinload(models.Analista.comentarios_campana), # ELIMINADO
+                selectinload(models.Analista.avisos_creados),
+                selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+            )
         )
         analista_to_return = result.scalars().first()
         if not analista_to_return:
@@ -435,12 +472,18 @@ async def update_analista_password(
 
     try:
         await db.commit()
-        await db.refresh(analista_a_actualizar) # Refrescar el objeto después del commit
-        # Forzar la carga de campanas_asignadas para evitar MissingGreenlet
+        await db.refresh(analista_a_actualizar)
+        # Cargar explícitamente las relaciones para la respuesta COMPLETA
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == analista_a_actualizar.id)
-            .options(selectinload(models.Analista.campanas_asignadas))
+            .options(
+                selectinload(models.Analista.campanas_asignadas),
+                selectinload(models.Analista.tareas),
+                # selectinload(models.Analista.comentarios_campana), # ELIMINADO
+                selectinload(models.Analista.avisos_creados),
+                selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+            )
         )
         analista_to_return = result.scalars().first()
         if not analista_to_return:
@@ -516,7 +559,13 @@ async def asignar_campana_a_analista(
     analista_result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.id == analista_id)
-        .options(selectinload(models.Analista.campanas_asignadas))
+        .options(
+            selectinload(models.Analista.campanas_asignadas),
+            selectinload(models.Analista.tareas),
+            # selectinload(models.Analista.comentarios_campana), # ELIMINADO
+            selectinload(models.Analista.avisos_creados),
+            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+        )
     )
     analista = analista_result.scalars().first()
     if not analista:
@@ -526,6 +575,10 @@ async def asignar_campana_a_analista(
     campana = campana_result.scalars().first()
     if not campana:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
+
+    # Un RESPONSABLE solo puede asignar campañas a analistas de rol ANALISTA
+    if current_analista.role == UserRole.RESPONSABLE and analista.role != UserRole.ANALISTA:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede asignar campañas a analistas de rol ANALISTA.")
 
     if campana in analista.campanas_asignadas:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La campaña ya está asignada a este analista.")
@@ -546,7 +599,23 @@ async def asignar_campana_a_analista(
             detail=f"Error inesperado al asignar campaña: {e}"
         )
     await db.refresh(analista)
-    return analista
+    # Recargar explícitamente las relaciones para la respuesta COMPLETA
+    # Asegúrate de que esta sección también tenga las correcciones
+    result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.id == analista.id)
+        .options(
+            selectinload(models.Analista.campanas_asignadas),
+            selectinload(models.Analista.tareas),
+            # selectinload(models.Analista.comentarios_campana), # ELIMINADO
+            selectinload(models.Analista.avisos_creados),
+            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+        )
+    )
+    analista_to_return = result.scalars().first()
+    if not analista_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la asignación.")
+    return analista_to_return
 
 @app.delete("/analistas/{analista_id}/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desasignar Campaña de Analista")
 async def desasignar_campana_de_analista(
@@ -562,7 +631,12 @@ async def desasignar_campana_de_analista(
     analista_result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.id == analista_id)
-        .options(selectinload(models.Analista.campanas_asignadas))
+        .options(
+            selectinload(models.Analista.campanas_asignadas),
+            selectinload(models.Analista.tareas),
+            selectinload(models.Analista.avisos_creados),
+            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ también para carga inicial!
+        )
     )
     analista = analista_result.scalars().first()
     if not analista:
@@ -572,6 +646,10 @@ async def desasignar_campana_de_analista(
     campana = campana_result.scalars().first()
     if not campana:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
+
+    # Un RESPONSABLE solo puede desasignar campañas de analistas de rol ANALISTA
+    if current_analista.role == UserRole.RESPONSABLE and analista.role != UserRole.ANALISTA:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede desasignar campañas de analistas de rol ANALISTA.")
 
     if campana not in analista.campanas_asignadas:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La campaña no está asignada a este analista.")
@@ -591,7 +669,24 @@ async def desasignar_campana_de_analista(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al desasignar campaña: {e}"
         )
-    return
+    # Si esta función devuelve el analista actualizado, necesitarías recargarlo con las relaciones
+    # Si solo devuelve 204 No Content, no es necesario recargar el objeto completo.
+    # Por ahora, como el response_model es Analista, asumiré que quieres devolver el objeto.
+    await db.refresh(analista)
+    result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.id == analista.id)
+        .options(
+            selectinload(models.Analista.campanas_asignadas),
+            selectinload(models.Analista.tareas),
+            selectinload(models.Analista.avisos_creados),
+            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+        )
+    )
+    analista_to_return = result.scalars().first()
+    if not analista_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la desasignación.")
+    return analista_to_return
 
 # --- Endpoints para Campañas (Protegidos) ---
 
@@ -621,11 +716,23 @@ async def crear_campana(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al crear campaña: {e}"
         )
-    await db.refresh(db_campana) # Refresca el objeto para obtener su ID
+    await db.refresh(db_campana)
 
     # Forzar la carga de relaciones antes de la serialización de Pydantic
-    await db.refresh(db_campana, attribute_names=["analistas_asignados"])
-    return db_campana
+    result = await db.execute(
+        select(models.Campana)
+        .filter(models.Campana.id == db_campana.id)
+        .options(
+            selectinload(models.Campana.analistas_asignados),
+            selectinload(models.Campana.tareas),
+            selectinload(models.Campana.comentarios),
+            selectinload(models.Campana.avisos)
+        )
+    )
+    campana_to_return = result.scalars().first()
+    if not campana_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la campaña después de la creación.")
+    return campana_to_return
 
 
 @app.get("/campanas/", response_model=List[Campana], summary="Obtener todas las Campañas (Protegido)")
@@ -637,7 +744,15 @@ async def obtener_campanas(
     Obtiene la lista de todas las campañas desde la base de datos.
     Requiere autenticación.
     """
-    result = await db.execute(select(models.Campana).options(selectinload(models.Campana.analistas_asignados)))
+    result = await db.execute(
+        select(models.Campana)
+        .options(
+            selectinload(models.Campana.analistas_asignados),
+            selectinload(models.Campana.tareas),
+            selectinload(models.Campana.comentarios),
+            selectinload(models.Campana.avisos)
+        )
+    )
     campanas = result.scalars().unique().all()
     return campanas
 
@@ -655,7 +770,12 @@ async def obtener_campana_por_id(
     result = await db.execute(
         select(models.Campana)
         .filter(models.Campana.id == campana_id)
-        .options(selectinload(models.Campana.analistas_asignados)) # Cargar analistas asignados
+        .options(
+            selectinload(models.Campana.analistas_asignados),
+            selectinload(models.Campana.tareas),
+            selectinload(models.Campana.comentarios),
+            selectinload(models.Campana.avisos)
+        )
     )
     campana = result.scalars().first()
     if not campana:
@@ -685,12 +805,17 @@ async def actualizar_campana(
 
     try:
         await db.commit()
-        await db.refresh(campana_existente) # Refrescar el objeto después del commit
-        # Forzar la carga de relaciones para la respuesta
+        await db.refresh(campana_existente)
+        # Recargar la campaña con sus relaciones para la respuesta
         result = await db.execute(
             select(models.Campana)
             .filter(models.Campana.id == campana_existente.id)
-            .options(selectinload(models.Campana.analistas_asignados))
+            .options(
+                selectinload(models.Campana.analistas_asignados),
+                selectinload(models.Campana.tareas),
+                selectinload(models.Campana.comentarios),
+                selectinload(models.Campana.avisos)
+            )
         )
         campana_to_return = result.scalars().first()
         if not campana_to_return:
@@ -767,10 +892,7 @@ async def crear_tarea(
     if not campana_existente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Campaña con ID {tarea.campana_id} no encontrada.")
 
-    # Convertir el Pydantic Enum a su valor de cadena antes de pasarlo al modelo SQLAlchemy
     tarea_data_dict = tarea.model_dump()
-    tarea_data_dict["progreso"] = tarea_data_dict["progreso"].value
-
     db_tarea = models.Tarea(
         **tarea_data_dict
     )
@@ -791,10 +913,14 @@ async def crear_tarea(
         )
     await db.refresh(db_tarea)
 
-    # Forzar la carga de relaciones para la respuesta
+    # Forzar la carga de relaciones para la respuesta COMPLETA
     result = await db.execute(
         select(models.Tarea)
-        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana), selectinload(models.Tarea.checklist_items))
+        .options(
+            selectinload(models.Tarea.analista),
+            selectinload(models.Tarea.campana),
+            selectinload(models.Tarea.checklist_items)
+        )
         .filter(models.Tarea.id == db_tarea.id)
     )
     tarea_to_return = result.scalars().first()
@@ -804,7 +930,7 @@ async def crear_tarea(
     return tarea_to_return
 
 
-@app.get("/tareas/", response_model=List[Tarea], summary="Obtener Tareas (con filtros opcionales) (Protegido)")
+@app.get("/tareas/", response_model=List[TareaListOutput], summary="Obtener Tareas (con filtros opcionales) (Protegido)")
 async def obtener_tareas(
     db: AsyncSession = Depends(get_db),
     analista_id: Optional[int] = None,
@@ -818,8 +944,9 @@ async def obtener_tareas(
     """
     query = select(models.Tarea).options(
         selectinload(models.Tarea.analista),
-        selectinload(models.Tarea.campana),
-        selectinload(models.Tarea.checklist_items)
+        selectinload(models.Tarea.campana)
+        # ¡IMPORTANTE! Se eliminó selectinload(models.Tarea.checklist_items) para optimizar la carga de la lista
+        # El frontend debería usar el endpoint de detalle para obtener los checklist_items.
     )
 
     if current_analista.role == UserRole.ANALISTA:
@@ -850,7 +977,7 @@ async def obtener_tarea_por_id(
         .options(
             selectinload(models.Tarea.analista),
             selectinload(models.Tarea.campana),
-            selectinload(models.Tarea.checklist_items)
+            selectinload(models.Tarea.checklist_items) # Se mantiene la carga completa para el detalle
         )
     )
     tarea = result.scalars().first()
@@ -878,49 +1005,51 @@ async def actualizar_tarea(
     db_tarea_result = await db.execute(
         select(models.Tarea)
         .filter(models.Tarea.id == tarea_id)
-        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana), selectinload(models.Tarea.checklist_items))
+        .options(
+            selectinload(models.Tarea.analista),
+            selectinload(models.Tarea.campana),
+            selectinload(models.Tarea.checklist_items)
+        )
     )
     tarea_existente = db_tarea_result.scalars().first()
 
     if tarea_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
 
-    # Crear un diccionario con los datos a actualizar, excluyendo los no seteados
     update_data = tarea_update.model_dump(exclude_unset=True)
 
-    # Manejar 'progreso' específicamente para asegurar que sea el valor de cadena
     if "progreso" in update_data:
-        tarea_existente.progreso = update_data["progreso"].value
-        del update_data["progreso"] # Eliminar del diccionario para evitar doble procesamiento
+        tarea_existente.progreso = update_data["progreso"]
+        del update_data["progreso"]
 
-    # Actualizar analista_id si ha cambiado
     if "analista_id" in update_data and update_data["analista_id"] != tarea_existente.analista_id:
         analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == update_data["analista_id"]))
         if analista_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {update_data['analista_id']} no encontrado.")
         tarea_existente.analista_id = update_data["analista_id"]
-        del update_data["analista_id"] # Eliminar del diccionario
+        del update_data["analista_id"]
 
-    # Actualizar campana_id si ha cambiado
     if "campana_id" in update_data and update_data["campana_id"] != tarea_existente.campana_id:
         campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == update_data["campana_id"]))
         if campana_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nueva Campaña con ID {update_data['campana_id']} no encontrada.")
         tarea_existente.campana_id = update_data["campana_id"]
-        del update_data["campana_id"] # Eliminar del diccionario
+        del update_data["campana_id"]
 
-    # Actualizar el resto de los campos
     for key, value in update_data.items():
         setattr(tarea_existente, key, value)
 
     try:
         await db.commit()
-        await db.refresh(tarea_existente) # Refrescar el objeto después del commit
-        # Forzar la carga de relaciones para la respuesta
+        await db.refresh(tarea_existente)
         result = await db.execute(
             select(models.Tarea)
             .filter(models.Tarea.id == tarea_existente.id)
-            .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana), selectinload(models.Tarea.checklist_items))
+            .options(
+                selectinload(models.Tarea.analista),
+                selectinload(models.Tarea.campana),
+                selectinload(models.Tarea.checklist_items)
+            )
         )
         tarea_to_return = result.scalars().first()
         if not tarea_to_return:
@@ -987,8 +1116,13 @@ async def crear_checklist_item(
     Crea un nuevo elemento de checklist asociado a una tarea.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
-    tarea_existente_result = await db.execute(select(models.Tarea).where(models.Tarea.id == item.tarea_id))
-    if tarea_existente_result.scalars().first() is None:
+    tarea_existente_result = await db.execute(
+        select(models.Tarea)
+        .filter(models.Tarea.id == item.tarea_id)
+        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana))
+    )
+    tarea_existente = tarea_existente_result.scalars().first()
+    if tarea_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada para asociar el ChecklistItem")
 
     db_item = models.ChecklistItem(**item.model_dump())
@@ -1008,7 +1142,16 @@ async def crear_checklist_item(
             detail=f"Error inesperado al crear checklist item: {e}"
         )
     await db.refresh(db_item)
-    return db_item
+    # Cargar explícitamente la relación tarea para la respuesta COMPLETA
+    result = await db.execute(
+        select(models.ChecklistItem)
+        .filter(models.ChecklistItem.id == db_item.id)
+        .options(selectinload(models.ChecklistItem.tarea))
+    )
+    item_to_return = result.scalars().first()
+    if not item_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el checklist item después de la creación.")
+    return item_to_return
 
 @app.get("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Obtener ChecklistItem por ID (Protegido)")
 async def obtener_checklist_item_por_id(
@@ -1020,13 +1163,20 @@ async def obtener_checklist_item_por_id(
     Obtiene un ítem de checklist específico por su ID.
     Requiere autenticación. Un analista normal solo ve ítems de sus propias tareas.
     """
-    result = await db.execute(select(models.ChecklistItem).filter(models.ChecklistItem.id == item_id))
+    result = await db.execute(
+        select(models.ChecklistItem)
+        .filter(models.ChecklistItem.id == item_id)
+        .options(selectinload(models.ChecklistItem.tarea))
+    )
     item = result.scalars().first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ChecklistItem no encontrado.")
     
     if current_analista.role == UserRole.ANALISTA:
-        tarea_result = await db.execute(select(models.Tarea).filter(models.Tarea.id == item.tarea_id, models.Tarea.analista_id == current_analista.id))
+        tarea_result = await db.execute(
+            select(models.Tarea)
+            .filter(models.Tarea.id == item.tarea_id, models.Tarea.analista_id == current_analista.id)
+        )
         if not tarea_result.scalars().first():
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este ChecklistItem.")
 
@@ -1043,7 +1193,7 @@ async def obtener_checklist_items(
     Obtiene todos los elementos de checklist, o filtra por ID de tarea.
     Requiere autenticación. Un analista normal solo ve ítems de sus propias tareas.
     """
-    query = select(models.ChecklistItem)
+    query = select(models.ChecklistItem).options(selectinload(models.ChecklistItem.tarea))
     
     if current_analista.role == UserRole.ANALISTA:
         query = query.join(models.Tarea).where(models.Tarea.analista_id == current_analista.id)
@@ -1067,7 +1217,11 @@ async def actualizar_checklist_item(
     Actualiza la información de un elemento de checklist existente.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
-    db_item_result = await db.execute(select(models.ChecklistItem).where(models.ChecklistItem.id == item_id))
+    db_item_result = await db.execute(
+        select(models.ChecklistItem)
+        .filter(models.ChecklistItem.id == item_id)
+        .options(selectinload(models.ChecklistItem.tarea))
+    )
     item_existente = db_item_result.scalars().first()
 
     if item_existente is None:
@@ -1097,7 +1251,16 @@ async def actualizar_checklist_item(
             detail=f"Error inesperado al actualizar checklist item: {e}"
         )
     await db.refresh(item_existente)
-    return item_existente
+    # Cargar explícitamente la relación tarea para la respuesta COMPLETA
+    result = await db.execute(
+        select(models.ChecklistItem)
+        .filter(models.ChecklistItem.id == item_existente.id)
+        .options(selectinload(models.ChecklistItem.tarea))
+    )
+    item_to_return = result.scalars().first()
+    if not item_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el checklist item después de la actualización.")
+    return item_to_return
 
 @app.delete("/checklist_items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un ChecklistItem (Protegido por Supervisor)")
 async def eliminar_checklist_item(
@@ -1145,11 +1308,11 @@ async def crear_comentario_campana(
     Crea un nuevo comentario asociado a una campaña y a un analista.
     Requiere autenticación.
     """
-    analista_result = await db.execute(select(models.Analista).where(models.Analista.id == comentario.analista_id))
+    analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == comentario.analista_id))
     if analista_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
-    campana_result = await db.execute(select(models.Campana).where(models.Campana.id == comentario.campana_id))
+    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == comentario.campana_id))
     if campana_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 
@@ -1171,10 +1334,10 @@ async def crear_comentario_campana(
         )
     await db.refresh(db_comentario)
 
-    # Forzar la carga de relaciones para la respuesta
+    # Forzar la carga de relaciones para la respuesta COMPLETA
     result = await db.execute(
         select(models.ComentarioCampana)
-        .options(selectinload(models.ComentarioCampana.analista))
+        .options(selectinload(models.ComentarioCampana.analista), selectinload(models.ComentarioCampana.campana))
         .filter(models.ComentarioCampana.id == db_comentario.id)
     )
     comentario_to_return = result.scalars().first()
@@ -1196,7 +1359,8 @@ async def obtener_comentarios_campana(
     Requiere autenticación.
     """
     query = select(models.ComentarioCampana).options(
-        selectinload(models.ComentarioCampana.analista)
+        selectinload(models.ComentarioCampana.analista),
+        selectinload(models.ComentarioCampana.campana)
     )
     if campana_id:
         query = query.where(models.ComentarioCampana.campana_id == campana_id)
@@ -1253,12 +1417,12 @@ async def crear_aviso(
     Crea un nuevo aviso.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
-    creador_result = await db.execute(select(models.Analista).where(models.Analista.id == aviso.creador_id))
+    creador_result = await db.execute(select(models.Analista).filter(models.Analista.id == aviso.creador_id))
     if creador_result.scalars().first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista creador no encontrado.")
 
     if aviso.campana_id:
-        campana_result = await db.execute(select(models.Campana).where(models.Campana.id == aviso.campana_id))
+        campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == aviso.campana_id))
         if campana_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña asociada no encontrada.")
 
@@ -1280,12 +1444,22 @@ async def crear_aviso(
         )
     await db.refresh(db_aviso)
 
-    # Forzar la carga de relaciones antes de la serialización de Pydantic
-    await db.refresh(db_aviso, attribute_names=["creador", "campana", "acuses_recibo"])
+    # Forzar la carga de relaciones anidadas para la respuesta COMPLETA
+    result = await db.execute(
+        select(models.Aviso)
+        .filter(models.Aviso.id == db_aviso.id)
+        .options(
+            selectinload(models.Aviso.creador),
+            selectinload(models.Aviso.campana),
+            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista)
+        )
+    )
+    aviso_to_return = result.scalars().first()
+    if not aviso_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el aviso después de la creación.")
+    return aviso_to_return
 
-    return db_aviso
-
-@app.get("/avisos/", response_model=List[Aviso], summary="Obtener Avisos (con filtros opcionales) (Protegido)")
+@app.get("/avisos/", response_model=List[AvisoListOutput], summary="Obtener Avisos (con filtros opcionales) (Protegido)") # ¡CAMBIO AQUÍ!
 async def obtener_avisos(
     db: AsyncSession = Depends(get_db),
     creador_id: Optional[int] = None,
@@ -1298,8 +1472,9 @@ async def obtener_avisos(
     """
     query = select(models.Aviso).options(
         selectinload(models.Aviso.creador),
-        selectinload(models.Aviso.campana),
-        selectinload(models.Aviso.acuses_recibo) # Cargar acuses de recibo
+        selectinload(models.Aviso.campana)
+        # ¡IMPORTANTE! Se eliminó selectinload(models.Aviso.acuses_recibo) para optimizar la carga de la lista
+        # El frontend debería usar el endpoint de detalle para obtener los acuses_recibo.
     )
 
     if current_analista.role == UserRole.ANALISTA:
@@ -1336,18 +1511,14 @@ async def obtener_aviso_por_id(
         .options(
             selectinload(models.Aviso.creador),
             selectinload(models.Aviso.campana),
-            selectinload(models.Aviso.acuses_recibo) # Cargar acuses de recibo
+            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista) # ¡IMPORTANTE! Se mantiene la carga completa para el detalle
         )
     )
     aviso = result.scalars().first()
     if not aviso:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
     
-    # Forzar la carga de relaciones antes de la serialización de Pydantic
-    await db.refresh(aviso, attribute_names=["creador", "campana", "acuses_recibo"])
-
     if current_analista.role == UserRole.ANALISTA:
-        # Analista only sees avisos created by them or associated with their campaigns
         is_creator = aviso.creador_id == current_analista.id
         is_assigned_to_campaign = False
         if aviso.campana_id:
@@ -1355,7 +1526,6 @@ async def obtener_aviso_por_id(
                 select(models.analistas_campanas.c.campana_id)
                 .where(models.analistas_campanas.c.analista_id == current_analista.id)
             )
-            # Fetch all assigned campaign IDs for the current analista
             assigned_campaign_ids = [c_id for (c_id,) in assigned_campaigns_result.all()]
             is_assigned_to_campaign = aviso.campana_id in assigned_campaign_ids
         
@@ -1402,6 +1572,7 @@ async def actualizar_aviso(
 
     try:
         await db.commit()
+        await db.refresh(aviso_existente)
     except ProgrammingError as e:
         await db.rollback()
         raise HTTPException(
@@ -1415,10 +1586,13 @@ async def actualizar_aviso(
             detail=f"Error inesperado al actualizar aviso: {e}"
         )
     
-    # Recargar el aviso con sus relaciones para la respuesta
     updated_aviso_result = await db.execute(
         select(models.Aviso)
-        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana), selectinload(models.Aviso.acuses_recibo))
+        .options(
+            selectinload(models.Aviso.creador),
+            selectinload(models.Aviso.campana),
+            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista)
+        )
         .filter(models.Aviso.id == aviso_id)
     )
     updated_aviso = updated_aviso_result.scalars().first()
@@ -1480,7 +1654,7 @@ async def registrar_acuse_recibo(
     if current_analista.role == UserRole.ANALISTA and analista_id != current_analista.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para registrar un acuse de recibo para otro analista.")
 
-    analista_result = await db.execute(select(models.Analista).where(models.Analista.id == analista_id))
+    analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == analista_id))
     analista_existente = analista_result.scalars().first()
     if analista_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
@@ -1520,7 +1694,7 @@ async def registrar_acuse_recibo(
         )
     await db.refresh(db_acuse)
 
-    # Forzar la carga de relaciones para la respuesta
+    # Forzar la carga de relaciones para la respuesta COMPLETA
     result = await db.execute(
         select(models.AcuseReciboAviso)
         .options(
