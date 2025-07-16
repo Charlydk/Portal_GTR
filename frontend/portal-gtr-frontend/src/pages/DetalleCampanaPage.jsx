@@ -6,14 +6,17 @@ import { useAuth } from '../context/AuthContext';
 import { Container, Card, ListGroup, Button, Spinner, Alert, Row, Col } from 'react-bootstrap';
 
 function DetalleCampanaPage() {
-    const { id } = useParams(); // Obtiene el ID de la campana de la URL
+    const { id } = useParams();
     const navigate = useNavigate();
-    const { authToken, user } = useAuth(); // Obtiene el token y el usuario logueado
+    const { authToken, user, refreshUser } = useAuth(); // ¡Importar refreshUser!
+
+    console.log("DetalleCampanaPage - authToken:", authToken);
+    console.log("DetalleCampanaPage - user:", user);
 
     const [campana, setCampana] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [isProcessing, setIsProcessing] = useState(false); // Para deshabilitar botones durante la operación
+    const [isProcessing, setIsProcessing] = useState(false);
 
     // Función para cargar los detalles de la campana
     const fetchCampanaDetails = useCallback(async () => {
@@ -80,10 +83,9 @@ function DetalleCampanaPage() {
             }
 
             // Si la operación fue exitosa, volvemos a cargar los detalles de la campana
-            // para que la UI se actualice con la nueva lista de analistas asignados
+            // Y AHORA, ¡REFRESCAMOS EL PERFIL DEL USUARIO EN EL CONTEXTO!
             await fetchCampanaDetails();
-            // Opcional: Mostrar un mensaje de éxito
-            // alert(`Campaña ${action === 'assign' ? 'asignada' : 'desasignada'} con éxito.`);
+            await refreshUser(); // ¡Llamada a la nueva función!
 
         } catch (err) {
             console.error(`Error al ${action === 'assign' ? 'asignarse' : 'desasignarse'}:`, err);
