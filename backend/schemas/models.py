@@ -203,9 +203,9 @@ class Analista(AnalistaBase):
 class Campana(CampanaBase):
     id: int
     fecha_creacion: datetime
-    analistas_asignados: List["AnalistaSimple"] = []
-    tareas: List["TareaSimple"] = []
-    comentarios: List["ComentarioCampanaSimple"] = []
+    analistas_asignados: List["AnalistaSimple"] = [] 
+    tareas: List["TareaSimple"] = []                 
+    comentarios: List["ComentarioCampanaSimple"] = [] 
     avisos: List["AvisoSimple"] = []
     class Config:
         from_attributes = True
