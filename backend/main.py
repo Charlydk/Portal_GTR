@@ -18,10 +18,10 @@ from schemas.models import (
     ProgresoTarea, UserRole,
     AnalistaBase, Analista, AnalistaCreate, PasswordUpdate, AnalistaMe,
     CampanaBase, Campana, CampanaSimple,
-    TareaBase, Tarea, TareaSimple, TareaListOutput,
-    ChecklistItemBase, ChecklistItem, ChecklistItemSimple,
+    TareaBase, Tarea, TareaSimple, TareaListOutput, TareaUpdate,
+    ChecklistItemBase, ChecklistItem, ChecklistItemSimple, ChecklistItemUpdate,
     ComentarioCampanaBase, ComentarioCampana, ComentarioCampanaSimple,
-    AvisoBase, Aviso, AvisoSimple, AvisoListOutput, # ¡AvisoListOutput agregado!
+    AvisoBase, Aviso, AvisoSimple, AvisoListOutput,
     AcuseReciboAviso, AcuseReciboCreate, AcuseReciboAvisoSimple
 )
 
@@ -1007,16 +1007,18 @@ async def obtener_tarea_por_id(
     return tarea
 
 
-@app.put("/tareas/{tarea_id}", response_model=Tarea, summary="Actualizar una Tarea existente (Protegido por Supervisor/Responsable)")
+@app.put("/tareas/{tarea_id}", response_model=Tarea, summary="Actualizar una Tarea existente (Protegido)")
 async def actualizar_tarea(
     tarea_id: int,
-    tarea_update: TareaBase,
+    tarea_update: TareaUpdate,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    current_analista: models.Analista = Depends(get_current_analista)
 ):
     """
     Actualiza la información de una tarea existente.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Requiere autenticación.
+    Un Analista solo puede actualizar el progreso y la descripción de sus propias tareas.
+    Un Supervisor o Responsable pueden actualizar cualquier campo de cualquier tarea.
     """
     db_tarea_result = await db.execute(
         select(models.Tarea)
@@ -1032,32 +1034,58 @@ async def actualizar_tarea(
     if tarea_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
 
-    update_data = tarea_update.model_dump(exclude_unset=True)
+    # Lógica de autorización y actualización basada en el rol del usuario
+    update_data = tarea_update.model_dump(exclude_unset=True) # Obtiene solo los campos que fueron enviados en la solicitud
+    
+    # --- CAMBIO AQUÍ: Comparar los valores del Enum ---
+    if current_analista.role.value == UserRole.ANALISTA.value:
+        # Un ANALISTA solo puede actualizar sus propias tareas
+        if tarea_existente.analista_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar esta tarea. Solo puedes actualizar tus propias tareas.")
+        
+        # Un ANALISTA solo puede actualizar 'progreso' y 'descripcion'
+        allowed_fields_for_analist = {"progreso", "descripcion"}
+        
+        # Filtra los datos de actualización para incluir solo los campos permitidos
+        filtered_update_data = {
+            k: v for k, v in update_data.items() if k in allowed_fields_for_analist
+        }
+        
+        # Aplica solo las actualizaciones permitidas
+        for key, value in filtered_update_data.items():
+            setattr(tarea_existente, key, value)
 
-    if "progreso" in update_data:
-        tarea_existente.progreso = update_data["progreso"]
-        del update_data["progreso"]
+    # --- CAMBIO AQUÍ: Comparar los valores del Enum ---
+    elif current_analista.role.value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
+        # Supervisor y Responsable pueden actualizar todos los campos.
+        # Mantén la lógica existente para manejar analista_id y campana_id.
+        if "analista_id" in update_data and update_data["analista_id"] != tarea_existente.analista_id:
+            analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == update_data["analista_id"]))
+            if analista_result.scalars().first() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {update_data['analista_id']} no encontrado.")
+            tarea_existente.analista_id = update_data["analista_id"]
+        
+        if "campana_id" in update_data and update_data["campana_id"] != tarea_existente.campana_id:
+            campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == update_data["campana_id"]))
+            if campana_result.scalars().first() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nueva Campaña con ID {update_data['campana_id']} no encontrada.")
+            tarea_existente.campana_id = update_data["campana_id"]
 
-    if "analista_id" in update_data and update_data["analista_id"] != tarea_existente.analista_id:
-        analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == update_data["analista_id"]))
-        if analista_result.scalars().first() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {update_data['analista_id']} no encontrado.")
-        tarea_existente.analista_id = update_data["analista_id"]
-        del update_data["analista_id"]
-
-    if "campana_id" in update_data and update_data["campana_id"] != tarea_existente.campana_id:
-        campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == update_data["campana_id"]))
-        if campana_result.scalars().first() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nueva Campaña con ID {update_data['campana_id']} no encontrada.")
-        tarea_existente.campana_id = update_data["campana_id"]
-        del update_data["campana_id"]
-
-    for key, value in update_data.items():
-        setattr(tarea_existente, key, value)
+        # Aplica los campos restantes (titulo, descripcion, fecha_vencimiento, progreso si no se manejó arriba)
+        for key, value in update_data.items():
+            if key not in ["analista_id", "campana_id"]: # Evita sobrescribir si ya se manejaron
+                setattr(tarea_existente, key, value)
+            elif key == "progreso": # Permite que el progreso se actualice aquí si no lo hizo el analista
+                setattr(tarea_existente, key, value)
+    
+    else:
+        # Esto debería ser un caso excepcional si get_current_analista siempre devuelve un usuario válido
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar tareas con tu rol actual.")
 
     try:
         await db.commit()
         await db.refresh(tarea_existente)
+        # Recargar la tarea con todas las relaciones necesarias para la respuesta
         result = await db.execute(
             select(models.Tarea)
             .filter(models.Tarea.id == tarea_existente.id)
@@ -1084,7 +1112,6 @@ async def actualizar_tarea(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al actualizar tarea: {e}"
         )
-
 
 @app.delete("/tareas/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea (Protegido por Supervisor)")
 async def eliminar_tarea(
@@ -1222,35 +1249,62 @@ async def obtener_checklist_items(
     items = await db.execute(query)
     return items.scalars().all()
 
-@app.put("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Actualizar un ChecklistItem existente (Protegido por Supervisor/Responsable)")
+@app.put("/checklist_items/{item_id}", response_model=ChecklistItem, summary="Actualizar un ChecklistItem existente (Protegido)")
 async def actualizar_checklist_item(
     item_id: int,
-    item_update: ChecklistItemBase,
+    item_update: ChecklistItemUpdate, # ¡CAMBIADO DE ChecklistItemBase a ChecklistItemUpdate!
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    current_analista: models.Analista = Depends(get_current_analista) # ¡CAMBIADO AQUÍ!
 ):
     """
     Actualiza la información de un elemento de checklist existente.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Requiere autenticación.
+    Un Analista solo puede cambiar el estado 'completado' de los ítems de sus propias tareas.
+    Un Supervisor o Responsable pueden actualizar cualquier campo de cualquier ítem.
     """
     db_item_result = await db.execute(
         select(models.ChecklistItem)
         .filter(models.ChecklistItem.id == item_id)
-        .options(selectinload(models.ChecklistItem.tarea))
+        .options(selectinload(models.ChecklistItem.tarea)) # Cargar la tarea asociada para verificar permisos
     )
     item_existente = db_item_result.scalars().first()
 
     if item_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ChecklistItem no encontrado")
 
-    if item_update.tarea_id != item_existente.tarea_id:
-        nueva_tarea_existente_result = await db.execute(select(models.Tarea).where(models.Tarea.id == item_update.tarea_id))
-        if nueva_tarea_existente_result.scalars().first() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Tarea no encontrada para reasignar el ChecklistItem")
-        item_existente.tarea_id = item_update.tarea_id
+    # Lógica de autorización y actualización basada en el rol del usuario
+    update_data = item_update.model_dump(exclude_unset=True) # Obtiene solo los campos que fueron enviados
 
-    item_existente.descripcion = item_update.descripcion
-    item_existente.completado = item_update.completado
+    if current_analista.role.value == UserRole.ANALISTA.value:
+        # Un ANALISTA solo puede actualizar ítems de sus propias tareas
+        if item_existente.tarea.analista_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar este ítem de checklist. Solo puedes actualizar ítems de tus propias tareas.")
+        
+        # Un ANALISTA solo puede actualizar el campo 'completado'
+        if "completado" in update_data:
+            item_existente.completado = update_data["completado"]
+        else:
+            # Si el analista envía otros campos aparte de 'completado', se ignoran y se lanza un error
+            # si no se envió 'completado' en absoluto.
+            # Si solo se envió 'descripcion' o 'tarea_id' se ignoran silenciosamente.
+            pass # No hacer nada si no se envió 'completado'
+            
+    elif current_analista.role.value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
+        # Supervisor y Responsable pueden actualizar todos los campos
+        if "tarea_id" in update_data and update_data["tarea_id"] != item_existente.tarea_id:
+            nueva_tarea_existente_result = await db.execute(select(models.Tarea).where(models.Tarea.id == update_data["tarea_id"]))
+            if nueva_tarea_existente_result.scalars().first() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nueva Tarea no encontrada para reasignar el ChecklistItem")
+            item_existente.tarea_id = update_data["tarea_id"]
+        
+        if "descripcion" in update_data:
+            item_existente.descripcion = update_data["descripcion"]
+        
+        if "completado" in update_data:
+            item_existente.completado = update_data["completado"]
+    
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar ítems de checklist con tu rol actual.")
 
     try:
         await db.commit()
