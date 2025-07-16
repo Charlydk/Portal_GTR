@@ -5,17 +5,18 @@ import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { Container, Card, ListGroup, Button, Spinner, Alert, Row, Col } from 'react-bootstrap';
 
-function DetalleCampanaPage() { // Renombrado de DetalleCampañaPage a DetalleCampanaPage
+function DetalleCampanaPage() {
     const { id } = useParams(); // Obtiene el ID de la campana de la URL
     const navigate = useNavigate();
     const { authToken, user } = useAuth(); // Obtiene el token y el usuario logueado
 
-    const [campana, setCampana] = useState(null); // Renombrado de campaign a campana
+    const [campana, setCampana] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isProcessing, setIsProcessing] = useState(false); // Para deshabilitar botones durante la operación
 
     // Función para cargar los detalles de la campana
-    const fetchCampanaDetails = useCallback(async () => { // Renombrado
+    const fetchCampanaDetails = useCallback(async () => {
         if (!authToken) {
             setLoading(false);
             setError("Necesita iniciar sesión para ver los detalles de la campana.");
@@ -40,8 +41,7 @@ function DetalleCampanaPage() { // Renombrado de DetalleCampañaPage a DetalleCa
                 throw new Error(`Error al cargar la campana: ${response.statusText}`);
             }
             const data = await response.json();
-            setCampana(data); // Renombrado
-            // DEBUGGING: Verifica el objeto de la campana recibido
+            setCampana(data);
             console.log("Datos de la campana recibidos en el frontend:", data);
         } catch (err) {
             console.error("Error al obtener detalles de la campana:", err);
@@ -54,6 +54,44 @@ function DetalleCampanaPage() { // Renombrado de DetalleCampañaPage a DetalleCa
     useEffect(() => {
         fetchCampanaDetails();
     }, [fetchCampanaDetails]);
+
+    // Lógica para asignar/desasignar al analista actual
+    const handleAssignUnassign = async (action) => {
+        if (!user || !authToken || isProcessing) return;
+
+        setIsProcessing(true);
+        setError(null);
+
+        const endpoint = `${API_BASE_URL}/analistas/${user.id}/campanas/${campana.id}`;
+        const method = action === 'assign' ? 'POST' : 'DELETE';
+
+        try {
+            const response = await fetch(endpoint, {
+                method: method,
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `Error al ${action === 'assign' ? 'asignarse' : 'desasignarse'} de la campana: ${response.statusText}`);
+            }
+
+            // Si la operación fue exitosa, volvemos a cargar los detalles de la campana
+            // para que la UI se actualice con la nueva lista de analistas asignados
+            await fetchCampanaDetails();
+            // Opcional: Mostrar un mensaje de éxito
+            // alert(`Campaña ${action === 'assign' ? 'asignada' : 'desasignada'} con éxito.`);
+
+        } catch (err) {
+            console.error(`Error al ${action === 'assign' ? 'asignarse' : 'desasignarse'}:`, err);
+            setError(err.message || `No se pudo ${action === 'assign' ? 'asignar' : 'desasignar'} la campana.`);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
 
     if (loading) {
         return (
@@ -81,7 +119,7 @@ function DetalleCampanaPage() { // Renombrado de DetalleCampañaPage a DetalleCa
         );
     }
 
-    if (!campana) { // Renombrado
+    if (!campana) {
         return (
             <Container className="mt-4">
                 <Alert variant="info">
@@ -93,8 +131,11 @@ function DetalleCampanaPage() { // Renombrado de DetalleCampañaPage a DetalleCa
         );
     }
 
-    // Determinar si el usuario es Supervisor o Responsable (para edición)
-    const canManageCampana = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE'); // Renombrado
+    // Determinar si el usuario es Supervisor o Responsable (para edición completa de campana)
+    const canManageCampana = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
+    // Determinar si el usuario actual es un analista y está asignado a esta campana
+    const isAnalyst = user && user.role === 'ANALISTA';
+    const isAssignedToThisCampana = isAnalyst && campana.analistas_asignados?.some(analyst => analyst.id === user.id);
 
     return (
         <Container className="py-5">
@@ -109,6 +150,29 @@ function DetalleCampanaPage() { // Renombrado de DetalleCampañaPage a DetalleCa
                             <p><strong>Fecha de Inicio:</strong> {campana.fecha_inicio ? new Date(campana.fecha_inicio).toLocaleDateString() : 'N/A'}</p>
                             <p><strong>Fecha de Fin:</strong> {campana.fecha_fin ? new Date(campana.fecha_fin).toLocaleDateString() : 'N/A'}</p>
                             <p><strong>Fecha de Creación:</strong> {new Date(campana.fecha_creacion).toLocaleString()}</p>
+                        </Col>
+                        <Col md={6} className="d-flex align-items-center justify-content-end">
+                            {isAnalyst && ( // Solo mostrar botones si el usuario es un analista
+                                isAssignedToThisCampana ? (
+                                    <Button
+                                        variant="danger"
+                                        onClick={() => handleAssignUnassign('unassign')}
+                                        disabled={isProcessing}
+                                        className="me-2"
+                                    >
+                                        {isProcessing ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Desasignarme de esta Campana'}
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="success"
+                                        onClick={() => handleAssignUnassign('assign')}
+                                        disabled={isProcessing}
+                                        className="me-2"
+                                    >
+                                        {isProcessing ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Asignarme a esta Campana'}
+                                    </Button>
+                                )
+                            )}
                         </Col>
                     </Row>
 

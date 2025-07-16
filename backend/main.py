@@ -561,26 +561,33 @@ async def desactivar_analista(
 
 # --- Endpoints para Asignación de Campañas a Analistas (¡NUEVOS!) ---
 
-@app.post("/analistas/{analista_id}/campanas/{campana_id}", response_model=Analista, status_code=status.HTTP_200_OK, summary="Asignar Campaña a Analista")
+@app.post("/analistas/{analista_id}/campanas/{campana_id}", response_model=Analista, status_code=status.HTTP_200_OK, summary="Asignar Campana a Analista (Protegido)")
 async def asignar_campana_a_analista(
     analista_id: int,
     campana_id: int,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    current_analista: models.Analista = Depends(get_current_analista) # ¡CAMBIADO: Ahora cualquier usuario autenticado puede acceder!
 ):
     """
     Asigna una campaña a un analista.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Requiere autenticación.
+    Un Analista solo puede asignarse a sí mismo.
+    Un Supervisor o Responsable pueden asignar campañas a cualquier analista.
     """
+    # Lógica de autorización
+    if current_analista.role.value == UserRole.ANALISTA.value:
+        if analista_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Analista solo puede asignarse campañas a sí mismo.")
+    # Para Supervisor/Responsable, no se necesita una verificación adicional aquí, ya que pueden asignar a cualquiera.
+
     analista_result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.id == analista_id)
         .options(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
-            # selectinload(models.Analista.comentarios_campana), # ELIMINADO
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+            selectinload(models.Analista.acuses_recibo_avisos)
         )
     )
     analista = analista_result.scalars().first()
@@ -592,12 +599,18 @@ async def asignar_campana_a_analista(
     if not campana:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 
-    # Un RESPONSABLE solo puede asignar campañas a analistas de rol ANALISTA
-    if current_analista.role == UserRole.RESPONSABLE and analista.role != UserRole.ANALISTA:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede asignar campañas a analistas de rol ANALISTA.")
+    # Un RESPONSABLE solo puede asignar campañas a analistas de rol ANALISTA (si no es a sí mismo)
+    # Esta lógica es para cuando un RESPONSABLE asigna a OTRO ANALISTA.
+    # Si el current_analista es un RESPONSABLE y está intentando asignar a un analista que NO es ANALISTA,
+    # y no es a sí mismo, entonces se deniega.
+    if (current_analista.role.value == UserRole.RESPONSABLE.value and 
+        analista.role.value != UserRole.ANALISTA.value and 
+        analista_id != current_analista.id): # Agregamos la condición para que un RESPONSABLE pueda asignarse a sí mismo
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede asignar campañas a analistas de rol ANALISTA o a sí mismo.")
+
 
     if campana in analista.campanas_asignadas:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La campaña ya está asignada a este analista.")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La campana ya está asignada a este analista.")
 
     analista.campanas_asignadas.append(campana)
     try:
@@ -606,26 +619,24 @@ async def asignar_campana_a_analista(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al asignar campaña: {e}"
+            detail=f"Error de base de datos al asignar campana: {e}"
         )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al asignar campaña: {e}"
+            detail=f"Error inesperado al asignar campana: {e}"
         )
     await db.refresh(analista)
     # Recargar explícitamente las relaciones para la respuesta COMPLETA
-    # Asegúrate de que esta sección también tenga las correcciones
     result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.id == analista.id)
         .options(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
-            # selectinload(models.Analista.comentarios_campana), # ELIMINADO
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+            selectinload(models.Analista.acuses_recibo_avisos)
         )
     )
     analista_to_return = result.scalars().first()
@@ -633,17 +644,25 @@ async def asignar_campana_a_analista(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la asignación.")
     return analista_to_return
 
-@app.delete("/analistas/{analista_id}/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desasignar Campaña de Analista")
+@app.delete("/analistas/{analista_id}/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desasignar Campana de Analista (Protegido)")
 async def desasignar_campana_de_analista(
     analista_id: int,
     campana_id: int,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    current_analista: models.Analista = Depends(get_current_analista) # ¡CAMBIADO: Ahora cualquier usuario autenticado puede acceder!
 ):
     """
     Desasigna una campaña de un analista.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Requiere autenticación.
+    Un Analista solo puede desasignarse a sí mismo.
+    Un Supervisor o Responsable pueden desasignar campañas de cualquier analista.
     """
+    # Lógica de autorización
+    if current_analista.role.value == UserRole.ANALISTA.value:
+        if analista_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Analista solo puede desasignarse campañas a sí mismo.")
+    # Para Supervisor/Responsable, no se necesita una verificación adicional aquí.
+
     analista_result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.id == analista_id)
@@ -651,7 +670,7 @@ async def desasignar_campana_de_analista(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ también para carga inicial!
+            selectinload(models.Analista.acuses_recibo_avisos)
         )
     )
     analista = analista_result.scalars().first()
@@ -663,12 +682,14 @@ async def desasignar_campana_de_analista(
     if not campana:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 
-    # Un RESPONSABLE solo puede desasignar campañas de analistas de rol ANALISTA
-    if current_analista.role == UserRole.RESPONSABLE and analista.role != UserRole.ANALISTA:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede desasignar campañas de analistas de rol ANALISTA.")
+    # Un RESPONSABLE solo puede desasignar campañas de analistas de rol ANALISTA (si no es a sí mismo)
+    if (current_analista.role.value == UserRole.RESPONSABLE.value and 
+        analista.role.value != UserRole.ANALISTA.value and 
+        analista_id != current_analista.id): # Agregamos la condición para que un RESPONSABLE pueda desasignarse a sí mismo
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Responsable solo puede desasignar campañas de analistas de rol ANALISTA o a sí mismo.")
 
     if campana not in analista.campanas_asignadas:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La campaña no está asignada a este analista.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="La campana no está asignada a este analista.")
 
     analista.campanas_asignadas.remove(campana)
     try:
@@ -677,13 +698,13 @@ async def desasignar_campana_de_analista(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al desasignar campaña: {e}"
+            detail=f"Error de base de datos al desasignar campana: {e}"
         )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al desasignar campaña: {e}"
+            detail=f"Error inesperado al desasignar campana: {e}"
         )
     # Si esta función devuelve el analista actualizado, necesitarías recargarlo con las relaciones
     # Si solo devuelve 204 No Content, no es necesario recargar el objeto completo.
@@ -696,7 +717,7 @@ async def desasignar_campana_de_analista(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos) # ¡CORREGIDO AQUÍ!
+            selectinload(models.Analista.acuses_recibo_avisos)
         )
     )
     analista_to_return = result.scalars().first()
@@ -773,16 +794,16 @@ async def obtener_campanas(
     return campanas
 
 
-@app.get("/campanas/{campana_id}", response_model=Campana, summary="Obtener Campaña por ID (Protegido)")
+@app.get("/campanas/{campana_id}", response_model=Campana, summary="Obtener Campana por ID (Protegido)")
 async def obtener_campana_por_id( # Mantengo el nombre de tu función
     campana_id: int,
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista) # Usamos get_current_analista
 ):
     """
-    Obtiene una campaña específica por su ID desde la base de datos.
+    Obtiene una campana específica por su ID desde la base de datos.
     Requiere autenticación.
-    Un analista normal solo puede ver las campañas a las que está asignado.
+    Cualquier usuario autenticado puede ver los detalles de cualquier campana.
     """
     result = await db.execute(
         select(models.Campana)
@@ -796,21 +817,9 @@ async def obtener_campana_por_id( # Mantengo el nombre de tu función
     )
     campana = result.scalars().first()
     if not campana:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campana no encontrada.")
     
-    # Lógica de permisos para ANALISTA: solo puede ver campañas asignadas a él
-    if current_analista.role.value == UserRole.ANALISTA.value:
-        # Recargar el analista con sus campañas asignadas para la verificación
-        analista_with_campaigns_result = await db.execute(
-            select(models.Analista)
-            .filter(models.Analista.id == current_analista.id)
-            .options(selectinload(models.Analista.campanas_asignadas))
-        )
-        analista_with_campaigns = analista_with_campaigns_result.scalars().first()
-
-        if not analista_with_campaigns or campana not in analista_with_campaigns.campanas_asignadas:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver esta campaña.")
-
+ 
     return campana
 
 @app.put("/campanas/{campana_id}", response_model=Campana, summary="Actualizar una Campaña existente (Protegido por Supervisor/Responsable)")
