@@ -199,14 +199,30 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/users/me/", response_model=AnalistaMe, summary="Obtener información del Analista actual (Optimizado)")
+@app.get("/users/me/", response_model=Analista, summary="Obtener información del Analista actual (Optimizado para Dashboard)")
 async def read_users_me(current_analista: models.Analista = Depends(get_current_analista), db: AsyncSession = Depends(get_db)):
     """
-    Obtiene la información básica del analista que actualmente ha iniciado sesión.
-    Requiere autenticación. No carga relaciones anidadas para optimizar el rendimiento.
+    Obtiene la información del analista que actualmente ha iniciado sesión,
+    incluyendo sus campañas asignadas, tareas, avisos creados y acuses de recibo
+    para el dashboard.
     """
-    await db.refresh(current_analista)
-    return current_analista
+    # Recargar el analista y cargar explícitamente todas las relaciones necesarias
+    result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.id == current_analista.id)
+        .options(
+            selectinload(models.Analista.campanas_asignadas), # Ya estaba
+            selectinload(models.Analista.tareas),             # ¡AÑADIDO! Para evitar MissingGreenlet
+            selectinload(models.Analista.avisos_creados),     # ¡AÑADIDO! Para evitar MissingGreenlet
+            selectinload(models.Analista.acuses_recibo_avisos) # ¡AÑADIDO! Para asegurar que esta también se cargue
+        )
+    )
+    analista_with_relations = result.scalars().first()
+    
+    if not analista_with_relations:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo cargar el perfil del analista con sus relaciones.")
+    
+    return analista_with_relations
 
 
 # --- Endpoints para Analistas (Protegidos) ---
