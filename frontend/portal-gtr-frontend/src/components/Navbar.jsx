@@ -50,7 +50,7 @@ function Navbar() {
                                         <Link className="nav-link" to="/analistas">Analistas</Link>
                                     </li>
                                 )}
-                                {(user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
+                                {(user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE' || user.role === 'ANALISTA') && (
                                     <li className="nav-item">
                                         <Link className="nav-link" to="/campanas">Campañas</Link>
                                     </li>

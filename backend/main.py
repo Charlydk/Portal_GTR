@@ -774,14 +774,15 @@ async def obtener_campanas(
 
 
 @app.get("/campanas/{campana_id}", response_model=Campana, summary="Obtener Campaña por ID (Protegido)")
-async def obtener_campana_por_id(
+async def obtener_campana_por_id( # Mantengo el nombre de tu función
     campana_id: int,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(get_current_analista)
+    current_analista: models.Analista = Depends(get_current_analista) # Usamos get_current_analista
 ):
     """
     Obtiene una campaña específica por su ID desde la base de datos.
     Requiere autenticación.
+    Un analista normal solo puede ver las campañas a las que está asignado.
     """
     result = await db.execute(
         select(models.Campana)
@@ -796,6 +797,20 @@ async def obtener_campana_por_id(
     campana = result.scalars().first()
     if not campana:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
+    
+    # Lógica de permisos para ANALISTA: solo puede ver campañas asignadas a él
+    if current_analista.role.value == UserRole.ANALISTA.value:
+        # Recargar el analista con sus campañas asignadas para la verificación
+        analista_with_campaigns_result = await db.execute(
+            select(models.Analista)
+            .filter(models.Analista.id == current_analista.id)
+            .options(selectinload(models.Analista.campanas_asignadas))
+        )
+        analista_with_campaigns = analista_with_campaigns_result.scalars().first()
+
+        if not analista_with_campaigns or campana not in analista_with_campaigns.campanas_asignadas:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver esta campaña.")
+
     return campana
 
 @app.put("/campanas/{campana_id}", response_model=Campana, summary="Actualizar una Campaña existente (Protegido por Supervisor/Responsable)")

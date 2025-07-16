@@ -23,6 +23,7 @@ import DetalleCampanaPage from './pages/DetalleCampanaPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import RegisterPage from './pages/RegisterPage';
 
+
 function App() {
   return (
     <Router>
@@ -182,7 +183,7 @@ function App() {
             <Route
               path="/campanas"
               element={
-                <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
                   <CampanasPage />
                 </PrivateRoute>
               }
@@ -191,7 +192,7 @@ function App() {
             <Route
               path="/campanas/:id"
               element={
-                <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
                   <DetalleCampanaPage />
                 </PrivateRoute>
               }
