@@ -13,14 +13,14 @@ import { useAuth } from '../context/AuthContext'; // Importa useAuth
  * o un componente Navigate a la página de login si no lo está.
  */
 function PrivateRoute({ children, allowedRoles }) {
-    const { user, isAuthReady } = useAuth(); // Obtiene el usuario y el estado de autenticación
+    const { user, loading } = useAuth(); // ¡CAMBIADO: Ahora usamos 'loading' del contexto!
 
-    // Si la autenticación aún no está lista, no renderizar nada (o un spinner si lo prefieres en App.jsx)
-    if (!isAuthReady) {
-        return null; // O un spinner de carga global si lo manejas en App.jsx
+    // Si la autenticación aún está en progreso, no renderizar nada (o un spinner)
+    if (loading) { // ¡CAMBIADO: Usamos 'loading' aquí!
+        return null; // Puedes poner un spinner de carga global aquí si lo deseas
     }
 
-    // Si no hay usuario o el usuario no tiene un rol, redirigir a login
+    // Si no hay usuario o el usuario no tiene un rol (después de que la carga haya terminado), redirigir a login
     if (!user || !user.role) {
         return <Navigate to="/login" replace />;
     }
@@ -29,13 +29,11 @@ function PrivateRoute({ children, allowedRoles }) {
     if (allowedRoles && allowedRoles.length > 0) {
         if (!allowedRoles.includes(user.role)) {
             // Si el usuario no tiene el rol permitido, redirigir a una página de acceso denegado o a la home
-            // console.warn(`Acceso denegado para el rol ${user.role} en esta ruta.`);
-            // Podrías redirigir a una página de "Acceso Denegado"
             return <Navigate to="/" replace />; // Redirigir a la página de inicio por defecto
         }
     }
 
-    // Si todo está bien, renderizar los componentes hijos
+    // Si todo está bien (no está cargando, hay usuario y tiene el rol permitido), renderizar los componentes hijos
     return children;
 }
 

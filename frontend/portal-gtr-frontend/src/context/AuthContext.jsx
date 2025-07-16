@@ -1,72 +1,19 @@
 // src/context/AuthContext.jsx
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { API_BASE_URL } from '../api'; // Asegúrate de que esta ruta sea correcta
+import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
+import { API_BASE_URL } from '../api'; // Asegúrate de que API_BASE_URL esté definido
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-    // Estado para el token de autenticación
-    const [authToken, setAuthToken] = useState(() => {
-        // Inicializa el token desde localStorage al cargar la aplicación
-        return localStorage.getItem('authToken');
-    });
-    // Estado para la información del usuario logueado
     const [user, setUser] = useState(null);
-    // Estado para indicar si la autenticación está lista (token cargado y usuario verificado)
-    const [isAuthReady, setIsAuthReady] = useState(false);
-    // Estado para errores de autenticación
-    const [authError, setAuthError] = useState(null);
+    const [authToken, setAuthToken] = useState(localStorage.getItem('authToken'));
+    const [loading, setLoading] = useState(true); // Estado de carga para la autenticación inicial
 
-    // Función para iniciar sesión
-    const login = useCallback(async (email, password) => {
-        setAuthError(null); // Limpiar errores previos
-        try {
-            const response = await fetch(`${API_BASE_URL}/token`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: new URLSearchParams({
-                    username: email,
-                    password: password,
-                }),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Error al iniciar sesión.');
-            }
-
-            const data = await response.json();
-            localStorage.setItem('authToken', data.access_token);
-            setAuthToken(data.access_token);
-            // Después de obtener el token, cargar la información del usuario
-            await fetchUserProfile(data.access_token);
-            return true; // Éxito en el login
-        } catch (err) {
-            console.error("Error en login:", err);
-            setAuthError(err.message || 'Error desconocido al iniciar sesión.');
-            setAuthToken(null);
-            setUser(null);
-            localStorage.removeItem('authToken');
-            return false; // Fallo en el login
-        }
-    }, []);
-
-    // Función para cerrar sesión
-    const logout = useCallback(() => {
-        setAuthToken(null);
-        setUser(null);
-        localStorage.removeItem('authToken');
-        setAuthError(null);
-        setIsAuthReady(true); // Considerar la autenticación lista (sin usuario)
-    }, []);
-
-    // Función para cargar el perfil del usuario
+    // Función para obtener el perfil del usuario
     const fetchUserProfile = useCallback(async (token) => {
         if (!token) {
             setUser(null);
-            setIsAuthReady(true);
+            setLoading(false);
             return;
         }
         try {
@@ -75,54 +22,84 @@ export const AuthProvider = ({ children }) => {
                     'Authorization': `Bearer ${token}`,
                 },
             });
-
-            if (!response.ok) {
-                // Si el token es inválido o expiró, cerrar sesión
-                logout();
-                throw new Error("Token inválido o expirado. Por favor, inicie sesión nuevamente.");
+            if (response.ok) {
+                const userData = await response.json();
+                setUser(userData);
+            } else {
+                // Si el token no es válido o hay un error, limpiar sesión
+                console.error("Error al obtener el perfil del usuario:", response.statusText);
+                localStorage.removeItem('authToken');
+                setAuthToken(null);
+                setUser(null);
             }
-
-            const userData = await response.json();
-            setUser(userData);
-        } catch (err) {
-            console.error("Error al cargar perfil de usuario:", err);
-            setAuthError(err.message || "Error al cargar el perfil del usuario.");
-            logout(); // Cerrar sesión si hay un error al cargar el perfil
+        } catch (error) {
+            console.error("Error de red o inesperado al obtener el perfil:", error);
+            localStorage.removeItem('authToken');
+            setAuthToken(null);
+            setUser(null);
         } finally {
-            setIsAuthReady(true);
+            setLoading(false);
         }
-    }, [logout]);
+    }, []);
 
-    // Efecto para cargar el perfil del usuario cuando el componente se monta
-    // o cuando el authToken cambia (ej. después de un login/logout)
-    useEffect(() => {
-        fetchUserProfile(authToken);
+    // Función para refrescar el perfil del usuario (útil después de ciertas operaciones)
+    const refreshUser = useCallback(async () => {
+        if (authToken) {
+            await fetchUserProfile(authToken);
+        }
     }, [authToken, fetchUserProfile]);
 
-    // Opcional: Si quieres que la aplicación espere a que la autenticación esté lista
-    // antes de renderizar el contenido principal.
-    if (!isAuthReady) {
-        return (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column' }}>
-                <div className="spinner-border text-primary" role="status">
-                    <span className="visually-hidden">Cargando autenticación...</span>
-                </div>
-                <p className="mt-2">Verificando sesión...</p>
-            </div>
-        );
-    }
+    useEffect(() => {
+        // Al cargar la aplicación, intentar obtener el perfil si hay un token
+        if (authToken) {
+            fetchUserProfile(authToken);
+        } else {
+            setLoading(false); // No hay token, no hay usuario, terminar carga
+        }
+    }, [authToken, fetchUserProfile]);
+
+    // Función de login
+    const login = async (email, password) => {
+        setLoading(true);
+        try {
+            const response = await fetch(`${API_BASE_URL}/token`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({ username: email, password: password }).toString(),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Error en el inicio de sesión');
+            }
+
+            const data = await response.json();
+            localStorage.setItem('authToken', data.access_token);
+            setAuthToken(data.access_token);
+            // El useEffect se encargará de llamar a fetchUserProfile con el nuevo token
+            return { success: true };
+        } catch (error) {
+            console.error("Error de login:", error);
+            setError(error.message); // Establecer el error para mostrarlo en el componente de login
+            setLoading(false);
+            return { success: false, error: error.message };
+        }
+    };
+
+    // Función de logout
+    const logout = () => {
+        localStorage.removeItem('authToken');
+        setAuthToken(null);
+        setUser(null);
+    };
 
     return (
-        <AuthContext.Provider value={{ authToken, user, login, logout, authError, isAuthReady }}>
+        <AuthContext.Provider value={{ user, authToken, loading, login, logout, refreshUser }}>
             {children}
         </AuthContext.Provider>
     );
 };
 
-export const useAuth = () => {
-    const context = useContext(AuthContext);
-    if (context === undefined) {
-        throw new Error('useAuth must be used within an AuthProvider');
-    }
-    return context;
-};
+export const useAuth = () => useContext(AuthContext);
