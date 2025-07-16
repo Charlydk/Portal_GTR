@@ -43,10 +43,24 @@ class TareaBase(BaseModel):
     analista_id: int
     campana_id: int
 
+class TareaUpdate(BaseModel):
+    titulo: Optional[str] = None
+    descripcion: Optional[str] = None
+    fecha_vencimiento: Optional[datetime] = None
+    progreso: Optional[ProgresoTarea] = None
+    analista_id: Optional[int] = None
+    campana_id: Optional[int] = None
+
 class ChecklistItemBase(BaseModel):
     tarea_id: int
     descripcion: str
     completado: Optional[bool] = False
+
+# ¡NUEVO ESQUEMA AÑADIDO AQUÍ! Para actualizaciones parciales de ChecklistItem
+class ChecklistItemUpdate(BaseModel):
+    tarea_id: Optional[int] = None
+    descripcion: Optional[str] = None
+    completado: Optional[bool] = None # Es importante que sea Optional para actualizaciones parciales
 
 class ComentarioCampanaBase(BaseModel):
     campana_id: int
@@ -179,9 +193,10 @@ class Analista(AnalistaBase):
     esta_activo: bool
     campanas_asignadas: List["CampanaSimple"] = []
     tareas: List["TareaSimple"] = []
-    comentarios_campana: List["ComentarioCampanaSimple"] = []
+    # comentarios_campana: List["ComentarioCampanaSimple"] = [] # Ya eliminado, pero lo dejo comentado por si acaso
     avisos_creados: List["AvisoSimple"] = []
-    acuses_recibo_dados: List["AcuseReciboAvisoSimple"] = []
+    acuses_recibo_avisos: List["AcuseReciboAvisoSimple"] = [] # Corregido
+
     class Config:
         from_attributes = True
 
