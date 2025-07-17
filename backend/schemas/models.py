@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, date # Importar 'date'
 from typing import Optional, List
 import enum
 
@@ -56,11 +56,10 @@ class ChecklistItemBase(BaseModel):
     descripcion: str
     completado: Optional[bool] = False
 
-# ¡NUEVO ESQUEMA AÑADIDO AQUÍ! Para actualizaciones parciales de ChecklistItem
 class ChecklistItemUpdate(BaseModel):
     tarea_id: Optional[int] = None
     descripcion: Optional[str] = None
-    completado: Optional[bool] = None # Es importante que sea Optional para actualizaciones parciales
+    completado: Optional[bool] = None
 
 class ComentarioCampanaBase(BaseModel):
     campana_id: int
@@ -77,6 +76,36 @@ class AvisoBase(BaseModel):
 class AcuseReciboCreate(BaseModel):
     analista_id: int
 
+# --- ESQUEMAS DE INCIDENCIA (Base y Create) ---
+class IncidenciaBase(BaseModel):
+    comentario: Optional[str] = None
+    horario: str # Formato "HH:MM"
+    tipo_incidencia: str # Ej. "tecnica", "operativa", "otra"
+    analista_id: int # El ID del analista que registra la incidencia
+
+class IncidenciaCreate(IncidenciaBase):
+    pass # No hay campos adicionales requeridos para la creación por ahora
+
+# --- ESQUEMAS DE BITÁCORA (Base y Update) ---
+class BitacoraEntryBase(BaseModel):
+    campana_id: int
+    fecha: date # ¡NUEVO: Campo 'fecha' requerido en la base!
+    hora: str # Formato "HH:MM"
+    comentario: Optional[str] = None
+
+class BitacoraEntryUpdate(BaseModel):
+    fecha: Optional[date] = None # ¡NUEVO: Campo 'fecha' opcional para actualización!
+    hora: Optional[str] = None
+    comentario: Optional[str] = None
+
+class BitacoraGeneralCommentBase(BaseModel):
+    campana_id: int
+    comentario: Optional[str] = None
+
+class BitacoraGeneralCommentUpdate(BaseModel):
+    comentario: Optional[str] = None
+
+
 # --- Simple Schemas (Para romper dependencias circulares en la salida) ---
 class AnalistaSimple(BaseModel):
     id: int
@@ -90,7 +119,6 @@ class AnalistaSimple(BaseModel):
     class Config:
         from_attributes = True
 
-# Esquema ligero para el usuario actual (GET /users/me/)
 class AnalistaMe(BaseModel):
     id: int
     nombre: str
@@ -120,7 +148,6 @@ class TareaSimple(BaseModel):
     class Config:
         from_attributes = True
 
-# Esquema para listas de tareas, sin checklist_items
 class TareaListOutput(BaseModel):
     id: int
     titulo: str
@@ -130,8 +157,8 @@ class TareaListOutput(BaseModel):
     analista_id: int
     campana_id: int
     fecha_creacion: datetime
-    analista: AnalistaSimple # Incluimos el analista para mostrar su nombre en la lista
-    campana: CampanaSimple # Incluimos la campaña para mostrar su nombre en la lista
+    analista: AnalistaSimple
+    campana: CampanaSimple
     class Config:
         from_attributes = True
 
@@ -162,7 +189,6 @@ class AvisoSimple(BaseModel):
     class Config:
         from_attributes = True
 
-# ¡NUEVO ESQUEMA AQUÍ! Para listas de avisos, sin acuses_recibo
 class AvisoListOutput(BaseModel):
     id: int
     titulo: str
@@ -171,8 +197,8 @@ class AvisoListOutput(BaseModel):
     fecha_creacion: datetime
     creador_id: int
     campana_id: Optional[int] = None
-    creador: AnalistaSimple # Para mostrar el nombre del creador en la lista
-    campana: Optional[CampanaSimple] = None # Para mostrar el nombre de la campaña en la lista
+    creador: AnalistaSimple
+    campana: Optional[CampanaSimple] = None
     class Config:
         from_attributes = True
 
@@ -185,6 +211,34 @@ class AcuseReciboAvisoSimple(BaseModel):
     class Config:
         from_attributes = True
 
+# --- ESQUEMAS DE INCIDENCIA (Simple) ---
+class IncidenciaSimple(BaseModel):
+    id: int
+    horario: str
+    tipo_incidencia: str
+    fecha_registro: datetime
+    class Config:
+        from_attributes = True
+
+# --- ESQUEMAS DE BITÁCORA (Simple) ---
+class BitacoraEntrySimple(BaseModel):
+    id: int
+    fecha: date # ¡NUEVO: Campo 'fecha' en el esquema simple!
+    hora: str
+    comentario: Optional[str] = None
+    fecha_creacion: datetime
+    fecha_ultima_actualizacion: datetime
+    class Config:
+        from_attributes = True
+
+class BitacoraGeneralCommentSimple(BaseModel):
+    id: int
+    comentario: Optional[str] = None
+    fecha_creacion: datetime
+    fecha_ultima_actualizacion: datetime
+    class Config:
+        from_attributes = True
+
 
 # --- Full Schemas (Output con relaciones seleccionadas usando los modelos "Simple") ---
 class Analista(AnalistaBase):
@@ -193,9 +247,9 @@ class Analista(AnalistaBase):
     esta_activo: bool
     campanas_asignadas: List["CampanaSimple"] = []
     tareas: List["TareaSimple"] = []
-    # comentarios_campana: List["ComentarioCampanaSimple"] = [] # Ya eliminado, pero lo dejo comentado por si acaso
     avisos_creados: List["AvisoSimple"] = []
-    acuses_recibo_avisos: List["AcuseReciboAvisoSimple"] = [] # Corregido
+    acuses_recibo_avisos: List["AcuseReciboAvisoSimple"] = []
+    incidencias_registradas: List["IncidenciaSimple"] = []
 
     class Config:
         from_attributes = True
@@ -203,10 +257,12 @@ class Analista(AnalistaBase):
 class Campana(CampanaBase):
     id: int
     fecha_creacion: datetime
-    analistas_asignados: List["AnalistaSimple"] = [] 
-    tareas: List["TareaSimple"] = []                 
-    comentarios: List["ComentarioCampanaSimple"] = [] 
+    analistas_asignados: List["AnalistaSimple"] = []
+    tareas: List["TareaSimple"] = []
+    comentarios: List["ComentarioCampanaSimple"] = []
     avisos: List["AvisoSimple"] = []
+    bitacora_entries: List["BitacoraEntrySimple"] = []
+    bitacora_general_comment: Optional["BitacoraGeneralCommentSimple"] = None
     class Config:
         from_attributes = True
 
@@ -250,6 +306,30 @@ class AcuseReciboAviso(AcuseReciboCreate):
     aviso: "AvisoSimple"
     class Config:
         from_attributes = True
+
+# --- ESQUEMAS DE INCIDENCIA (Full) ---
+class Incidencia(IncidenciaBase):
+    id: int
+    fecha_registro: datetime
+    analista: "AnalistaSimple"
+    class Config:
+        from_attributes = True
+
+# --- ESQUEMAS DE BITÁCORA (Full) ---
+class BitacoraEntry(BitacoraEntryBase):
+    id: int
+    fecha_creacion: datetime
+    fecha_ultima_actualizacion: datetime
+    class Config:
+        from_attributes = True
+
+class BitacoraGeneralComment(BitacoraGeneralCommentBase):
+    id: int
+    fecha_creacion: datetime
+    fecha_ultima_actualizacion: datetime
+    class Config:
+        from_attributes = True
+
 
 # Para autenticación
 class Token(BaseModel):
