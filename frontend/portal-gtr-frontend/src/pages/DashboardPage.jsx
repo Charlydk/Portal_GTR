@@ -96,6 +96,19 @@ function DashboardPage() {
     <Container className="py-5">
       <h2 className="text-center mb-4 text-primary">Dashboard de {user.nombre} {user.apellido} ({user.role})</h2>
 
+      <Row className="mb-4">
+        <Col md={12} className="text-center">
+          <Link
+            to="/incidencias/registrar"
+            className="btn btn-lg btn-primary shadow-sm" // Estilo Bootstrap para un botón grande y azul
+            style={{ padding: '15px 30px', fontSize: '1.2rem' }} // Estilos inline para ajuste fino
+          >
+            <i className="bi bi-pencil-square me-2"></i> {/* Opcional: Ícono de Bootstrap Icons si los tienes configurados */}
+            Registrar Nueva Incidencia
+          </Link>
+        </Col>
+      </Row>
+
       {user.role === 'ANALISTA' && (
         <Row>
           <Col md={12} className="mb-4">

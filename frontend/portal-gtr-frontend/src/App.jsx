@@ -22,6 +22,7 @@ import DetalleAnalistaPage from './pages/DetalleAnalistaPage';
 import DetalleCampanaPage from './pages/DetalleCampanaPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import RegisterPage from './pages/RegisterPage';
+import RegistroIncidenciaPage from './pages/RegistroIncidenciaPage';
 
 
 function App() {
@@ -226,8 +227,15 @@ function App() {
               }
             />
 
+            {/* registro de incidencias */}
+            <Route path="/incidencias/registrar" element={<RegistroIncidenciaPage />}
+            />
+  
             {/* Ruta para el caso de página no encontrada */}
-            <Route path="*" element={<div>404 - Página no encontrada</div>} />
+            <Route path="*" element={<div>404 - Página no encontrada</div>}
+            />
+
+            
           </Routes>
         </div>
       </AuthProvider>
