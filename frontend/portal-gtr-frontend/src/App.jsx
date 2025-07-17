@@ -23,6 +23,7 @@ import DetalleCampanaPage from './pages/DetalleCampanaPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import RegisterPage from './pages/RegisterPage';
 import RegistroIncidenciaPage from './pages/RegistroIncidenciaPage';
+import ListaIncidenciasPage from './pages/ListaIncidenciasPage'; // ¡NUEVA IMPORTACIÓN!
 
 
 function App() {
@@ -180,7 +181,7 @@ function App() {
             />
 
             {/* Campañas */}
-            {/* Lista de Campañas: Accesible por Supervisores y Responsables */}
+            {/* Lista de Campañas: Accesible por Analistas, Supervisores y Responsables */}
             <Route
               path="/campanas"
               element={
@@ -189,7 +190,7 @@ function App() {
                 </PrivateRoute>
               }
             />
-            {/* Detalle de Campaña: Accesible por Supervisores y Responsables */}
+            {/* Detalle de Campaña: Accesible por Analistas, Supervisores y Responsables */}
             <Route
               path="/campanas/:id"
               element={
@@ -228,12 +229,11 @@ function App() {
             />
 
             {/* registro de incidencias */}
-            <Route path="/incidencias/registrar" element={<RegistroIncidenciaPage />}
-            />
+            <Route path="/incidencias/registrar" element={<RegistroIncidenciaPage />} />
+            <Route path="/incidencias" element={<ListaIncidenciasPage />} /> {/* ¡NUEVA RUTA AÑADIDA! */}
   
             {/* Ruta para el caso de página no encontrada */}
-            <Route path="*" element={<div>404 - Página no encontrada</div>}
-            />
+            <Route path="*" element={<div>404 - Página no encontrada</div>} />
 
             
           </Routes>

@@ -1,22 +1,28 @@
 // frontend/portal-gtr-frontend/src/pages/RegistroIncidenciaPage.jsx
 import React, { useState } from 'react';
-// Importa el hook useNavigate si quieres redirigir después de enviar
-import { useNavigate } from 'react-router-dom'; 
+import { useNavigate } from 'react-router-dom';
+import { API_BASE_URL } from '../api'; // Importa la URL base de la API
+import { useAuth } from '../context/AuthContext'; // Importa el contexto de autenticación
+import { Container, Form, Button, Alert, Spinner } from 'react-bootstrap'; // Importa componentes de Bootstrap
 
 const RegistroIncidenciaPage = () => {
-  // Usamos useState para manejar el estado de cada campo del formulario
+  const { user, authToken } = useAuth(); // Obtiene el usuario y el token del contexto
+  const navigate = useNavigate();
+
   const [comentario, setComentario] = useState('');
-  const [horario, setHorario] = useState(''); // Estado para el horario seleccionado
-  const [tipoIncidencia, setTipoIncidencia] = useState('tecnica'); // Valor por defecto
-  const navigate = useNavigate(); // Para redirigir después de enviar
+  const [horario, setHorario] = useState('');
+  const [tipoIncidencia, setTipoIncidencia] = useState('tecnica');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
 
   // Función para generar las opciones de horario (cada 30 minutos)
   const generarOpcionesHorario = () => {
     const opciones = [];
     for (let h = 0; h < 24; h++) {
       for (let m = 0; m < 60; m += 30) {
-        const hora = h.toString().padStart(2, '0'); // Asegura dos dígitos (ej. 01)
-        const minuto = m.toString().padStart(2, '0'); // Asegura dos dígitos (ej. 00 o 30)
+        const hora = String(h).padStart(2, '0');
+        const minuto = String(m).padStart(2, '0');
         opciones.push(`${hora}:${minuto}`);
       }
     }
@@ -24,114 +30,132 @@ const RegistroIncidenciaPage = () => {
   };
 
   // Manejador del envío del formulario
-  const handleSubmit = (e) => {
-    e.preventDefault(); // Previene el comportamiento por defecto del formulario (recargar la página)
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setSuccessMessage(null);
+    setIsSubmitting(true);
 
-    // Aquí iría la lógica para enviar los datos al backend
-    const nuevaIncidencia = {
-      comentario,
-      horario,
-      tipoIncidencia,
-      // Podrías añadir fecha, usuario que registra, etc.
-      fecha: new Date().toISOString().split('T')[0], // Ejemplo: "YYYY-MM-DD"
-      registrador: 'UsuarioActual', // Esto vendría del contexto de autenticación
+    if (!user || !authToken) {
+      setError("No estás autenticado. Por favor, inicia sesión.");
+      setIsSubmitting(false);
+      return;
+    }
+
+    const newIncidencia = {
+      comentario: comentario,
+      horario: horario,
+      tipo_incidencia: tipoIncidencia,
+      analista_id: user.id, // Usamos el ID del usuario autenticado
     };
 
-    console.log('Datos de la incidencia a enviar:', nuevaIncidencia);
+    console.log('Datos de la incidencia a enviar:', newIncidencia);
 
-    // --- LÓGICA DE ENVÍO AL BACKEND (se implementará más adelante) ---
-    // Ejemplo de fetch (no funcional sin backend):
-    /*
-    fetch('/api/incidencias', { // Asume que tu backend tiene este endpoint
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // 'Authorization': `Bearer ${tokenDeUsuario}`, // Si tienes autenticación
-      },
-      body: JSON.stringify(nuevaIncidencia),
-    })
-    .then(response => response.json())
-    .then(data => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/incidencias/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(newIncidencia),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al registrar incidencia: ${response.statusText}`);
+      }
+
+      const data = await response.json();
       console.log('Incidencia registrada con éxito:', data);
-      alert('Incidencia registrada con éxito!');
-      // Redirigir o limpiar formulario
-      navigate('/incidencias'); // O a otra página después de registrar
-    })
-    .catch(error => {
-      console.error('Error al registrar incidencia:', error);
-      alert('Hubo un error al registrar la incidencia.');
-    });
-    */
-    // ------------------------------------------------------------------
+      setSuccessMessage('Incidencia registrada con éxito!');
 
-    // Limpiar formulario (opcional, si no se redirige)
-    setComentario('');
-    setHorario('');
-    setTipoIncidencia('tecnica');
+      // Limpiar formulario
+      setComentario('');
+      setHorario('');
+      setTipoIncidencia('tecnica');
+
+      // Opcional: Redirigir a la lista de incidencias después de un breve retraso
+      setTimeout(() => {
+        navigate('/incidencias'); // Asumiendo que /incidencias será la página de lista
+      }, 2000);
+
+    } catch (err) {
+      console.error('Error al registrar incidencia:', err);
+      setError(err.message || 'Hubo un error al registrar la incidencia.');
+    } finally {
+      setIsSubmitting(false);
+      // Limpiar mensajes de éxito/error después de un tiempo si no se redirige
+      if (!successMessage) { // Solo si no hay un mensaje de éxito que provoque redirección
+        setTimeout(() => { setError(null); }, 5000);
+      }
+    }
   };
 
   return (
-    <div className="registro-incidencia-container">
-      <h2>Registrar Nueva Incidencia</h2>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="comentario" style={{ display: 'block', marginBottom: '5px' }}>Comentario Breve:</label>
-          <textarea
-            id="comentario"
-            value={comentario}
-            onChange={(e) => setComentario(e.target.value)}
-            required
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
-            rows="4"
-          />
-        </div>
+    <Container className="py-5">
+      <div className="registro-incidencia-container p-4 border rounded shadow-sm bg-white">
+        <h2 className="text-center mb-4 text-primary">Registrar Nueva Incidencia</h2>
 
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="horario" style={{ display: 'block', marginBottom: '5px' }}>Horario:</label>
-          <select
-            id="horario"
-            value={horario}
-            onChange={(e) => setHorario(e.target.value)}
-            required
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
+        {error && <Alert variant="danger">{error}</Alert>}
+        {successMessage && <Alert variant="success">{successMessage}</Alert>}
+
+        <Form onSubmit={handleSubmit}>
+          <Form.Group className="mb-3">
+            <Form.Label htmlFor="comentario">Comentario Breve:</Form.Label>
+            <Form.Control
+              as="textarea"
+              id="comentario"
+              value={comentario}
+              onChange={(e) => setComentario(e.target.value)}
+              required
+              rows="4"
+              disabled={isSubmitting}
+            />
+          </Form.Group>
+
+          <Form.Group className="mb-3">
+            <Form.Label htmlFor="horario">Horario:</Form.Label>
+            <Form.Select
+              id="horario"
+              value={horario}
+              onChange={(e) => setHorario(e.target.value)}
+              required
+              disabled={isSubmitting}
+            >
+              <option value="">Selecciona un horario</option>
+              {generarOpcionesHorario().map((hora) => (
+                <option key={hora} value={hora}>{hora}</option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+
+          <Form.Group className="mb-3">
+            <Form.Label htmlFor="tipoIncidencia">Tipo de Incidencia:</Form.Label>
+            <Form.Select
+              id="tipoIncidencia"
+              value={tipoIncidencia}
+              onChange={(e) => setTipoIncidencia(e.target.value)}
+              required
+              disabled={isSubmitting}
+            >
+              <option value="tecnica">Técnica</option>
+              <option value="operativa">Operativa</option>
+              <option value="otra">Otra</option>
+            </Form.Select>
+          </Form.Group>
+
+          <Button
+            type="submit"
+            variant="primary"
+            className="w-100 mt-3"
+            disabled={isSubmitting}
           >
-            <option value="">Selecciona un horario</option>
-            {generarOpcionesHorario().map((hora) => (
-              <option key={hora} value={hora}>{hora}</option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="tipoIncidencia" style={{ display: 'block', marginBottom: '5px' }}>Tipo de Incidencia:</label>
-          <select
-            id="tipoIncidencia"
-            value={tipoIncidencia}
-            onChange={(e) => setTipoIncidencia(e.target.value)}
-            required
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
-          >
-            <option value="tecnica">Técnica</option>
-            <option value="operativa">Operativa</option>
-            <option value="otra">Otra</option>
-          </select>
-        </div>
-
-        <button
-          type="submit"
-          style={{
-            padding: '10px 20px',
-            backgroundColor: '#007bff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '5px',
-            cursor: 'pointer'
-          }}
-        >
-          Registrar Incidencia
-        </button>
-      </form>
-    </div>
+            {isSubmitting ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Registrar Incidencia'}
+          </Button>
+        </Form>
+      </div>
+    </Container>
   );
 };
 
