@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from datetime import datetime, date # Importar 'date'
+from datetime import datetime, date
 from typing import Optional, List
 import enum
 
@@ -76,27 +76,33 @@ class AvisoBase(BaseModel):
 class AcuseReciboCreate(BaseModel):
     analista_id: int
 
-# --- ESQUEMAS DE INCIDENCIA (Base y Create) ---
-class IncidenciaBase(BaseModel):
-    comentario: Optional[str] = None
-    horario: str # Formato "HH:MM"
-    tipo_incidencia: str # Ej. "tecnica", "operativa", "otra"
-    analista_id: int # El ID del analista que registra la incidencia
+# --- ESQUEMAS DE INCIDENCIA ELIMINADOS ---
+# class IncidenciaBase(BaseModel):
+#     comentario: Optional[str] = None
+#     horario: str
+#     tipo_incidencia: str
+#     analista_id: int
 
-class IncidenciaCreate(IncidenciaBase):
-    pass # No hay campos adicionales requeridos para la creación por ahora
+# class IncidenciaCreate(IncidenciaBase):
+#     pass
 
-# --- ESQUEMAS DE BITÁCORA (Base y Update) ---
+# --- ESQUEMAS DE BITÁCORA (Base y Update) - MODIFICADOS ---
 class BitacoraEntryBase(BaseModel):
     campana_id: int
-    fecha: date # ¡NUEVO: Campo 'fecha' requerido en la base!
+    fecha: date
     hora: str # Formato "HH:MM"
     comentario: Optional[str] = None
+    es_incidencia: Optional[bool] = False # ¡NUEVO CAMPO!
+    tipo_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
+    comentario_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
 
 class BitacoraEntryUpdate(BaseModel):
-    fecha: Optional[date] = None # ¡NUEVO: Campo 'fecha' opcional para actualización!
+    fecha: Optional[date] = None
     hora: Optional[str] = None
     comentario: Optional[str] = None
+    es_incidencia: Optional[bool] = None # ¡NUEVO CAMPO!
+    tipo_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
+    comentario_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
 
 class BitacoraGeneralCommentBase(BaseModel):
     campana_id: int
@@ -211,21 +217,24 @@ class AcuseReciboAvisoSimple(BaseModel):
     class Config:
         from_attributes = True
 
-# --- ESQUEMAS DE INCIDENCIA (Simple) ---
-class IncidenciaSimple(BaseModel):
-    id: int
-    horario: str
-    tipo_incidencia: str
-    fecha_registro: datetime
-    class Config:
-        from_attributes = True
+# --- ESQUEMAS DE INCIDENCIA (Simple) ELIMINADO ---
+# class IncidenciaSimple(BaseModel):
+#     id: int
+#     horario: str
+#     tipo_incidencia: str
+#     fecha_registro: datetime
+#     class Config:
+#         from_attributes = True
 
-# --- ESQUEMAS DE BITÁCORA (Simple) ---
+# --- ESQUEMAS DE BITÁCORA (Simple) - MODIFICADOS ---
 class BitacoraEntrySimple(BaseModel):
     id: int
-    fecha: date # ¡NUEVO: Campo 'fecha' en el esquema simple!
+    fecha: date
     hora: str
     comentario: Optional[str] = None
+    es_incidencia: Optional[bool] = False # ¡NUEVO CAMPO!
+    tipo_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
+    comentario_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
     fecha_creacion: datetime
     fecha_ultima_actualizacion: datetime
     class Config:
@@ -249,7 +258,8 @@ class Analista(AnalistaBase):
     tareas: List["TareaSimple"] = []
     avisos_creados: List["AvisoSimple"] = []
     acuses_recibo_avisos: List["AcuseReciboAvisoSimple"] = []
-    incidencias_registradas: List["IncidenciaSimple"] = []
+    # ¡RELACIÓN ELIMINADA! Ya no hay incidencias_registradas aquí
+    # incidencias_registradas: List["IncidenciaSimple"] = []
 
     class Config:
         from_attributes = True
@@ -307,15 +317,15 @@ class AcuseReciboAviso(AcuseReciboCreate):
     class Config:
         from_attributes = True
 
-# --- ESQUEMAS DE INCIDENCIA (Full) ---
-class Incidencia(IncidenciaBase):
-    id: int
-    fecha_registro: datetime
-    analista: "AnalistaSimple"
-    class Config:
-        from_attributes = True
+# --- ESQUEMAS DE INCIDENCIA (Full) ELIMINADO ---
+# class Incidencia(IncidenciaBase):
+#     id: int
+#     fecha_registro: datetime
+#     analista: "AnalistaSimple"
+#     class Config:
+#         from_attributes = True
 
-# --- ESQUEMAS DE BITÁCORA (Full) ---
+# --- ESQUEMAS DE BITÁCORA (Full) - MODIFICADOS ---
 class BitacoraEntry(BitacoraEntryBase):
     id: int
     fecha_creacion: datetime
