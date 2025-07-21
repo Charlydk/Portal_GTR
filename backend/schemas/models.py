@@ -72,37 +72,30 @@ class AvisoBase(BaseModel):
     fecha_vencimiento: Optional[datetime] = None
     creador_id: int
     campana_id: Optional[int] = None
+    # NUEVOS CAMPOS PARA AVISO
+    requiere_tarea: Optional[bool] = False
+    fecha_vencimiento_tarea: Optional[datetime] = None
 
 class AcuseReciboCreate(BaseModel):
     analista_id: int
 
-# --- ESQUEMAS DE INCIDENCIA ELIMINADOS ---
-# class IncidenciaBase(BaseModel):
-#     comentario: Optional[str] = None
-#     horario: str
-#     tipo_incidencia: str
-#     analista_id: int
-
-# class IncidenciaCreate(IncidenciaBase):
-#     pass
-
-# --- ESQUEMAS DE BITÁCORA (Base y Update) - MODIFICADOS ---
+# --- ESQUEMAS DE BITÁCORA (Base y Update) ---
 class BitacoraEntryBase(BaseModel):
     campana_id: int
     fecha: date
     hora: str # Formato "HH:MM"
     comentario: Optional[str] = None
-    es_incidencia: Optional[bool] = False # ¡NUEVO CAMPO!
-    tipo_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
-    comentario_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
+    es_incidencia: Optional[bool] = False
+    tipo_incidencia: Optional[str] = None
+    comentario_incidencia: Optional[str] = None
 
 class BitacoraEntryUpdate(BaseModel):
     fecha: Optional[date] = None
     hora: Optional[str] = None
     comentario: Optional[str] = None
-    es_incidencia: Optional[bool] = None # ¡NUEVO CAMPO!
-    tipo_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
-    comentario_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
+    es_incidencia: Optional[bool] = None
+    tipo_incidencia: Optional[str] = None
+    comentario_incidencia: Optional[str] = None
 
 class BitacoraGeneralCommentBase(BaseModel):
     campana_id: int
@@ -110,6 +103,23 @@ class BitacoraGeneralCommentBase(BaseModel):
 
 class BitacoraGeneralCommentUpdate(BaseModel):
     comentario: Optional[str] = None
+
+# --- NUEVOS ESQUEMAS PARA TAREAS GENERADAS POR AVISOS ---
+class TareaGeneradaPorAvisoBase(BaseModel):
+    titulo: str
+    descripcion: Optional[str] = None
+    fecha_vencimiento: Optional[datetime] = None
+    progreso: Optional[ProgresoTarea] = ProgresoTarea.PENDIENTE # Por defecto
+    analista_asignado_id: int
+    aviso_origen_id: Optional[int] = None # Para vincular a un aviso
+
+class TareaGeneradaPorAvisoUpdate(BaseModel):
+    titulo: Optional[str] = None
+    descripcion: Optional[str] = None
+    fecha_vencimiento: Optional[datetime] = None
+    progreso: Optional[ProgresoTarea] = None
+    analista_asignado_id: Optional[int] = None
+    aviso_origen_id: Optional[int] = None
 
 
 # --- Simple Schemas (Para romper dependencias circulares en la salida) ---
@@ -134,6 +144,8 @@ class AnalistaMe(BaseModel):
     role: UserRole
     esta_activo: bool
     fecha_creacion: datetime
+    # Incluir campanas_asignadas para el dashboard
+    campanas_asignadas: List["CampanaSimple"] = []
     class Config:
         from_attributes = True
 
@@ -153,6 +165,16 @@ class TareaSimple(BaseModel):
     fecha_vencimiento: datetime
     class Config:
         from_attributes = True
+
+# Nuevo esquema simple para TareaGeneradaPorAviso
+class TareaGeneradaPorAvisoSimple(BaseModel):
+    id: int
+    titulo: str
+    progreso: ProgresoTarea
+    fecha_vencimiento: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
 
 class TareaListOutput(BaseModel):
     id: int
@@ -192,6 +214,9 @@ class AvisoSimple(BaseModel):
     fecha_creacion: datetime
     creador_id: int
     campana_id: Optional[int] = None
+    # Nuevos campos en Simple
+    requiere_tarea: bool
+    fecha_vencimiento_tarea: Optional[datetime] = None
     class Config:
         from_attributes = True
 
@@ -205,6 +230,9 @@ class AvisoListOutput(BaseModel):
     campana_id: Optional[int] = None
     creador: AnalistaSimple
     campana: Optional[CampanaSimple] = None
+    # Nuevos campos en ListOutput
+    requiere_tarea: bool
+    fecha_vencimiento_tarea: Optional[datetime] = None
     class Config:
         from_attributes = True
 
@@ -217,24 +245,14 @@ class AcuseReciboAvisoSimple(BaseModel):
     class Config:
         from_attributes = True
 
-# --- ESQUEMAS DE INCIDENCIA (Simple) ELIMINADO ---
-# class IncidenciaSimple(BaseModel):
-#     id: int
-#     horario: str
-#     tipo_incidencia: str
-#     fecha_registro: datetime
-#     class Config:
-#         from_attributes = True
-
-# --- ESQUEMAS DE BITÁCORA (Simple) - MODIFICADOS ---
 class BitacoraEntrySimple(BaseModel):
     id: int
     fecha: date
     hora: str
     comentario: Optional[str] = None
-    es_incidencia: Optional[bool] = False # ¡NUEVO CAMPO!
-    tipo_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
-    comentario_incidencia: Optional[str] = None # ¡NUEVO CAMPO!
+    es_incidencia: Optional[bool] = False
+    tipo_incidencia: Optional[str] = None
+    comentario_incidencia: Optional[str] = None
     fecha_creacion: datetime
     fecha_ultima_actualizacion: datetime
     class Config:
@@ -255,12 +273,10 @@ class Analista(AnalistaBase):
     fecha_creacion: datetime
     esta_activo: bool
     campanas_asignadas: List["CampanaSimple"] = []
-    tareas: List["TareaSimple"] = []
+    tareas: List["TareaSimple"] = [] # Tareas de campaña
     avisos_creados: List["AvisoSimple"] = []
     acuses_recibo_avisos: List["AcuseReciboAvisoSimple"] = []
-    # ¡RELACIÓN ELIMINADA! Ya no hay incidencias_registradas aquí
-    # incidencias_registradas: List["IncidenciaSimple"] = []
-
+    tareas_generadas_por_avisos: List["TareaGeneradaPorAvisoSimple"] = [] # Nueva lista de tareas generadas por aviso
     class Config:
         from_attributes = True
 
@@ -270,7 +286,7 @@ class Campana(CampanaBase):
     analistas_asignados: List["AnalistaSimple"] = []
     tareas: List["TareaSimple"] = []
     comentarios: List["ComentarioCampanaSimple"] = []
-    avisos: List["AvisoSimple"] = []
+    avisos: List["AvisoSimple"] = [] # La lista de avisos de la campaña
     bitacora_entries: List["BitacoraEntrySimple"] = []
     bitacora_general_comment: Optional["BitacoraGeneralCommentSimple"] = None
     class Config:
@@ -282,6 +298,16 @@ class Tarea(TareaBase):
     analista: "AnalistaSimple"
     campana: "CampanaSimple"
     checklist_items: List["ChecklistItemSimple"] = []
+    class Config:
+        from_attributes = True
+
+# Esquema completo para TareaGeneradaPorAviso
+class TareaGeneradaPorAviso(TareaGeneradaPorAvisoBase):
+    id: int
+    fecha_creacion: datetime
+    progreso: ProgresoTarea # Aseguramos que sea el Enum completo
+    analista_asignado: "AnalistaSimple"
+    aviso_origen: Optional["AvisoSimple"] = None # Puede ser None si se crea manualmente
     class Config:
         from_attributes = True
 
@@ -306,6 +332,7 @@ class Aviso(AvisoBase):
     creador: "AnalistaSimple"
     campana: Optional["CampanaSimple"] = None
     acuses_recibo: List["AcuseReciboAvisoSimple"] = []
+    tareas_generadas: List["TareaGeneradaPorAvisoSimple"] = [] # Nueva lista de tareas generadas
     class Config:
         from_attributes = True
 
@@ -317,15 +344,6 @@ class AcuseReciboAviso(AcuseReciboCreate):
     class Config:
         from_attributes = True
 
-# --- ESQUEMAS DE INCIDENCIA (Full) ELIMINADO ---
-# class Incidencia(IncidenciaBase):
-#     id: int
-#     fecha_registro: datetime
-#     analista: "AnalistaSimple"
-#     class Config:
-#         from_attributes = True
-
-# --- ESQUEMAS DE BITÁCORA (Full) - MODIFICADOS ---
 class BitacoraEntry(BitacoraEntryBase):
     id: int
     fecha_creacion: datetime
@@ -349,3 +367,4 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
     role: Optional[UserRole] = None
+

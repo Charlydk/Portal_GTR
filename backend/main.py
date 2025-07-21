@@ -10,7 +10,7 @@ from typing import Optional, List
 
 # Importamos los modelos de SQLAlchemy (para la DB)
 from sql_app import models
-from sql_app.models import UserRole
+from sql_app.models import UserRole, ProgresoTarea # Importar ProgresoTarea también
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
@@ -26,6 +26,8 @@ from schemas.models import (
     BitacoraEntryBase, BitacoraEntryUpdate, BitacoraEntry,
     BitacoraGeneralCommentBase, BitacoraGeneralCommentUpdate, BitacoraGeneralComment,
     BitacoraEntrySimple, BitacoraGeneralCommentSimple,
+    # Nuevos esquemas para TareaGeneradaPorAviso
+    TareaGeneradaPorAvisoBase, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAviso, TareaGeneradaPorAvisoSimple
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -33,9 +35,6 @@ from database import get_db, engine
 
 # Importa las utilidades de seguridad
 from security import verify_password, get_password_hash, create_access_token, decode_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
-
-# Importa los errores de SQLAlchemy para un mejor manejo
-from sqlalchemy.exc import ProgrammingError
 
 app = FastAPI(
     title="Portal GTR API",
@@ -46,8 +45,8 @@ app = FastAPI(
 origins = [
     "http://localhost",
     "http://localhost:3000",
+    "http://127.0.0.1:5173", # Asegúrate de que tu frontend está en este puerto
     "http://localhost:5173",
-    "http://127.0.0.1:5173",
     "http://127.0.0.1:8000",
 ]
 
@@ -97,7 +96,19 @@ async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSes
     except Exception:
         raise credentials_exception
     
-    analista = await get_analista_by_email(token_data.email, db)
+    # Cargar el analista con todas las relaciones necesarias para el dashboard y otras operaciones
+    result = await db.execute(
+        select(models.Analista)
+        .filter(models.Analista.email == token_data.email)
+        .options(
+            selectinload(models.Analista.campanas_asignadas),
+            selectinload(models.Analista.tareas), # Tareas de campaña
+            selectinload(models.Analista.avisos_creados),
+            selectinload(models.Analista.acuses_recibo_avisos),
+            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO: Cargar tareas generadas por avisos
+        )
+    )
+    analista = result.scalars().first()
     if analista is None:
         raise credentials_exception
     
@@ -145,6 +156,7 @@ async def register_analista(analista: AnalistaCreate, db: AsyncSession = Depends
     try:
         await db.commit()
         await db.refresh(db_analista)
+        # Recargar el analista con todas las relaciones para la respuesta
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == db_analista.id)
@@ -152,7 +164,8 @@ async def register_analista(analista: AnalistaCreate, db: AsyncSession = Depends
                 selectinload(models.Analista.campanas_asignadas),
                 selectinload(models.Analista.tareas),
                 selectinload(models.Analista.avisos_creados),
-                selectinload(models.Analista.acuses_recibo_avisos)
+                selectinload(models.Analista.acuses_recibo_avisos),
+                selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
             )
         )
         analista_to_return = result.scalars().first()
@@ -203,25 +216,10 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 async def read_users_me(current_analista: models.Analista = Depends(get_current_analista), db: AsyncSession = Depends(get_db)):
     """
     Obtiene la información del analista que actualmente ha iniciado sesión,
-    incluyendo sus campañas asignadas, tareas, avisos creados, acuses de recibo.
+    incluyendo sus campañas asignadas, tareas, avisos creados, acuses de recibo y tareas generadas por avisos.
     """
-    # Recargar el analista y cargar explícitamente todas las relaciones necesarias
-    result = await db.execute(
-        select(models.Analista)
-        .filter(models.Analista.id == current_analista.id)
-        .options(
-            selectinload(models.Analista.campanas_asignadas),
-            selectinload(models.Analista.tareas),
-            selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos)
-        )
-    )
-    analista_with_relations = result.scalars().first()
-    
-    if not analista_with_relations:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No se pudo cargar el perfil del analista con sus relaciones.")
-    
-    return analista_with_relations
+    # current_analista ya viene cargado con todas las relaciones debido a get_current_analista
+    return current_analista
 
 
 # --- Endpoints para Analistas (Protegidos) ---
@@ -258,6 +256,7 @@ async def crear_analista(
     try:
         await db.commit()
         await db.refresh(db_analista)
+        # Recargar el analista con todas las relaciones para la respuesta
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == db_analista.id)
@@ -265,7 +264,8 @@ async def crear_analista(
                 selectinload(models.Analista.campanas_asignadas),
                 selectinload(models.Analista.tareas),
                 selectinload(models.Analista.avisos_creados),
-                selectinload(models.Analista.acuses_recibo_avisos)
+                selectinload(models.Analista.acuses_recibo_avisos),
+                selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
             )
         )
         analista_to_return = result.scalars().first()
@@ -299,7 +299,8 @@ async def obtener_analistas(
         selectinload(models.Analista.campanas_asignadas),
         selectinload(models.Analista.tareas),
         selectinload(models.Analista.avisos_creados),
-        selectinload(models.Analista.acuses_recibo_avisos)
+        selectinload(models.Analista.acuses_recibo_avisos),
+        selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
     )
     query = query.where(models.Analista.esta_activo == True)
     result = await db.execute(query)
@@ -325,7 +326,8 @@ async def obtener_analista_por_id(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos)
+            selectinload(models.Analista.acuses_recibo_avisos),
+            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
         )
     )
     analista = result.scalars().first()
@@ -352,7 +354,8 @@ async def get_all_analistas(
         selectinload(models.Analista.campanas_asignadas),
         selectinload(models.Analista.tareas),
         selectinload(models.Analista.avisos_creados),
-        selectinload(models.Analista.acuses_recibo_avisos)
+        selectinload(models.Analista.acuses_recibo_avisos),
+        selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
     )
     if not include_inactive:
         query = query.where(models.Analista.esta_activo == True)
@@ -398,6 +401,7 @@ async def actualizar_analista(
     try:
         await db.commit()
         await db.refresh(analista_existente)
+        # Recargar el analista con todas las relaciones para la respuesta
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == analista_existente.id)
@@ -405,7 +409,8 @@ async def actualizar_analista(
                 selectinload(models.Analista.campanas_asignadas),
                 selectinload(models.Analista.tareas),
                 selectinload(models.Analista.avisos_creados),
-                selectinload(models.Analista.acuses_recibo_avisos)
+                selectinload(models.Analista.acuses_recibo_avisos),
+                selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
             )
         )
         analista_to_return = result.scalars().first()
@@ -457,6 +462,7 @@ async def update_analista_password(
     try:
         await db.commit()
         await db.refresh(analista_a_actualizar)
+        # Recargar el analista con todas las relaciones para la respuesta
         result = await db.execute(
             select(models.Analista)
             .filter(models.Analista.id == analista_a_actualizar.id)
@@ -464,7 +470,8 @@ async def update_analista_password(
                 selectinload(models.Analista.campanas_asignadas),
                 selectinload(models.Analista.tareas),
                 selectinload(models.Analista.avisos_creados),
-                selectinload(models.Analista.acuses_recibo_avisos)
+                selectinload(models.Analista.acuses_recibo_avisos),
+                selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
             )
         )
         analista_to_return = result.scalars().first()
@@ -551,7 +558,8 @@ async def asignar_campana_a_analista(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos)
+            selectinload(models.Analista.acuses_recibo_avisos),
+            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
         )
     )
     analista = analista_result.scalars().first()
@@ -595,7 +603,8 @@ async def asignar_campana_a_analista(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos)
+            selectinload(models.Analista.acuses_recibo_avisos),
+            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
         )
     )
     analista_to_return = result.scalars().first()
@@ -627,7 +636,8 @@ async def desasignar_campana_de_analista(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos)
+            selectinload(models.Analista.acuses_recibo_avisos),
+            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
         )
     )
     analista = analista_result.scalars().first()
@@ -670,7 +680,8 @@ async def desasignar_campana_de_analista(
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos)
+            selectinload(models.Analista.acuses_recibo_avisos),
+            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
         )
     )
     analista_to_return = result.scalars().first()
@@ -1436,13 +1447,14 @@ async def eliminar_comentario_campana(
 
 @app.post("/avisos/", response_model=Aviso, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Aviso (Protegido por Supervisor/Responsable)")
 async def crear_aviso(
-    aviso: AvisoBase,
+    aviso: AvisoBase, # AvisoBase ahora incluye requiere_tarea y fecha_vencimiento_tarea
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
 ):
     """
     Crea un nuevo aviso.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Ahora puede especificar si el aviso requiere una tarea y su fecha de vencimiento.
     """
     creador_result = await db.execute(select(models.Analista).filter(models.Analista.id == aviso.creador_id))
     if creador_result.scalars().first() is None:
@@ -1452,6 +1464,13 @@ async def crear_aviso(
         campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == aviso.campana_id))
         if campana_result.scalars().first() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña asociada no encontrada.")
+
+    # Validar que si requiere_tarea es True, fecha_vencimiento_tarea no sea nula
+    if aviso.requiere_tarea and aviso.fecha_vencimiento_tarea is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Si 'requiere_tarea' es True, 'fecha_vencimiento_tarea' no puede ser nula."
+        )
 
     db_aviso = models.Aviso(**aviso.model_dump())
     db.add(db_aviso)
@@ -1477,7 +1496,8 @@ async def crear_aviso(
         .options(
             selectinload(models.Aviso.creador),
             selectinload(models.Aviso.campana),
-            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista)
+            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista),
+            selectinload(models.Aviso.tareas_generadas) # NUEVO: Cargar tareas generadas
         )
     )
     aviso_to_return = result.scalars().first()
@@ -1494,7 +1514,8 @@ async def obtener_avisos(
 ):
     """
     Obtiene todos los avisos, o filtra por ID del creador (analista) y/o ID de campaña.
-    Requiere autenticación. Un analista normal solo ve avisos creados por él o asociados a sus campañas.
+    Requiere autenticación. Un analista normal solo ve avisos creados por él o asociados a sus campañas,
+    o avisos que no tienen campaña asociada (generales).
     """
     query = select(models.Aviso).options(
         selectinload(models.Aviso.creador),
@@ -1502,14 +1523,18 @@ async def obtener_avisos(
     )
 
     if current_analista.role == UserRole.ANALISTA.value:
+        # Un analista puede ver:
+        # 1. Avisos creados por él
+        # 2. Avisos sin campaña asociada (generales)
+        # 3. Avisos asociados a campañas a las que está asignado
         query = query.filter(
             (models.Aviso.creador_id == current_analista.id) |
-            (models.Aviso.campana_id.is_(None)) |
+            (models.Aviso.campana_id.is_(None)) | # AHORA INCLUYE AVISOS GENERALES
             (models.Aviso.campana_id.in_(
                 select(models.analistas_campanas.c.campana_id).where(models.analistas_campanas.c.analista_id == current_analista.id)
             ))
         )
-    else:
+    else: # Supervisores y Responsables ven todos los avisos
         if creador_id:
             query = query.where(models.Aviso.creador_id == creador_id)
         if campana_id:
@@ -1527,7 +1552,8 @@ async def obtener_aviso_por_id(
 ):
     """
     Obtiene un aviso específico por su ID.
-    Requiere autenticación. Un analista normal solo ve avisos que él creó o asociados a sus campañas.
+    Requiere autenticación. Un analista normal solo ve avisos que él creó o asociados a sus campañas,
+    o avisos que no tienen campaña asociada (generales).
     """
     result = await db.execute(
         select(models.Aviso)
@@ -1535,7 +1561,8 @@ async def obtener_aviso_por_id(
         .options(
             selectinload(models.Aviso.creador),
             selectinload(models.Aviso.campana),
-            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista)
+            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista),
+            selectinload(models.Aviso.tareas_generadas) # NUEVO: Cargar tareas generadas
         )
     )
     aviso = result.scalars().first()
@@ -1544,6 +1571,7 @@ async def obtener_aviso_por_id(
     
     if current_analista.role == UserRole.ANALISTA.value:
         is_creator = aviso.creador_id == current_analista.id
+        is_general_aviso = aviso.campana_id is None # NUEVO: Verificar si es un aviso general
         is_assigned_to_campaign = False
         if aviso.campana_id:
             assigned_campaigns_result = await db.execute(
@@ -1553,7 +1581,8 @@ async def obtener_aviso_por_id(
             assigned_campaign_ids = [c_id for (c_id,) in assigned_campaigns_result.all()]
             is_assigned_to_campaign = aviso.campana_id in assigned_campaign_ids
         
-        if not is_creator and not is_assigned_to_campaign:
+        # El analista puede ver el aviso si: lo creó, es general, o está asignado a su campaña
+        if not is_creator and not is_general_aviso and not is_assigned_to_campaign:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este aviso.")
 
     return aviso
@@ -1561,7 +1590,7 @@ async def obtener_aviso_por_id(
 @app.put("/avisos/{aviso_id}", response_model=Aviso, summary="Actualizar un Aviso existente (Protegido por Supervisor/Responsable)")
 async def actualizar_aviso(
     aviso_id: int,
-    aviso_update: AvisoBase,
+    aviso_update: AvisoBase, # AvisoBase ahora incluye requiere_tarea y fecha_vencimiento_tarea
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
 ):
@@ -1574,6 +1603,14 @@ async def actualizar_aviso(
 
     if aviso_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
+
+    # Validar que si requiere_tarea es True, fecha_vencimiento_tarea no sea nula
+    # Esto se aplica si se está intentando cambiar requiere_tarea a True o si ya es True
+    if aviso_update.requiere_tarea and aviso_update.fecha_vencimiento_tarea is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Si 'requiere_tarea' es True, 'fecha_vencimiento_tarea' no puede ser nula."
+        )
 
     if aviso_update.creador_id is not None and aviso_update.creador_id != aviso_existente.creador_id:
         nuevo_creador_result = await db.execute(select(models.Analista).where(models.Analista.id == aviso_update.creador_id))
@@ -1615,7 +1652,8 @@ async def actualizar_aviso(
         .options(
             selectinload(models.Aviso.creador),
             selectinload(models.Aviso.campana),
-            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista)
+            selectinload(models.Aviso.acuses_recibo).selectinload(models.AcuseReciboAviso.analista),
+            selectinload(models.Aviso.tareas_generadas) # NUEVO: Cargar tareas generadas
         )
         .filter(models.Aviso.id == aviso_id)
     )
@@ -1672,6 +1710,7 @@ async def registrar_acuse_recibo(
     """
     Registra que un analista ha visto y acusado un aviso específico.
     Requiere autenticación. Un analista solo puede acusar recibo para sí mismo.
+    Si el aviso requiere una tarea, se genera una nueva tarea para el analista.
     """
     analista_id = acuse_data.analista_id
 
@@ -1683,9 +1722,10 @@ async def registrar_acuse_recibo(
     if analista_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
 
+    # Cargar el aviso con la relación tareas_generadas para verificar si ya existe una tarea
     aviso_result = await db.execute(
         select(models.Aviso)
-        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana))
+        .options(selectinload(models.Aviso.creador), selectinload(models.Aviso.campana), selectinload(models.Aviso.tareas_generadas)) # NUEVO
         .where(models.Aviso.id == aviso_id)
     )
     aviso_existente = aviso_result.scalars().first()
@@ -1702,19 +1742,45 @@ async def registrar_acuse_recibo(
 
     db_acuse = models.AcuseReciboAviso(aviso_id=aviso_id, analista_id=analista_id)
     db.add(db_acuse)
+
+    # --- Lógica para generar tarea si el aviso lo requiere ---
+    if aviso_existente.requiere_tarea:
+        # Verificar si ya existe una tarea generada por este aviso para este analista
+        existing_generated_task_result = await db.execute(
+            select(models.TareaGeneradaPorAviso)
+            .filter(
+                models.TareaGeneradaPorAviso.aviso_origen_id == aviso_id,
+                models.TareaGeneradaPorAviso.analista_asignado_id == analista_id
+            )
+        )
+        if not existing_generated_task_result.scalars().first(): # Si no existe, crearla
+            new_generated_task = models.TareaGeneradaPorAviso(
+                titulo=f"Tarea de Aviso: {aviso_existente.titulo}",
+                descripcion=f"Realizar la acción solicitada en el aviso: {aviso_existente.contenido}",
+                fecha_vencimiento=aviso_existente.fecha_vencimiento_tarea,
+                progreso=ProgresoTarea.PENDIENTE.value,
+                analista_asignado_id=analista_id,
+                aviso_origen_id=aviso_id
+            )
+            db.add(new_generated_task)
+            print(f"Tarea generada para analista {analista_id} por aviso {aviso_id}") # Para depuración
+        else:
+            print(f"Tarea ya existe para analista {analista_id} por aviso {aviso_id}. No se crea duplicado.") # Para depuración
+
+
     try:
         await db.commit()
     except ProgrammingError as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al registrar acuse de recibo: {e}"
+            detail=f"Error de base de datos al registrar acuse de recibo o generar tarea: {e}"
         )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al registrar acuse de recibo: {e}"
+            detail=f"Error inesperado al registrar acuse de recibo o generar tarea: {e}"
         )
     await db.refresh(db_acuse)
 
@@ -1748,8 +1814,21 @@ async def obtener_acuses_recibo_por_aviso(
     if aviso_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso no encontrado.")
     
-    if current_analista.role == UserRole.ANALISTA.value and aviso_existente.creador_id != current_analista.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver los acuses de recibo de este aviso.")
+    # Un analista solo puede ver los acuses de recibo de avisos que él creó, o avisos generales, o avisos de sus campañas
+    if current_analista.role == UserRole.ANALISTA.value:
+        is_creator = aviso_existente.creador_id == current_analista.id
+        is_general_aviso = aviso_existente.campana_id is None
+        is_assigned_to_campaign = False
+        if aviso_existente.campana_id:
+            assigned_campaigns_result = await db.execute(
+                select(models.analistas_campanas.c.campana_id)
+                .where(models.analistas_campanas.c.analista_id == current_analista.id)
+            )
+            assigned_campaign_ids = [c_id for (c_id,) in assigned_campaigns_result.all()]
+            is_assigned_to_campaign = aviso_existente.campana_id in assigned_campaign_ids
+        
+        if not is_creator and not is_general_aviso and not is_assigned_to_campaign:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver los acuses de recibo de este aviso.")
 
 
     query = select(models.AcuseReciboAviso).options(
@@ -2091,7 +2170,7 @@ async def upsert_bitacora_general_comment(
     await db.refresh(db_comment)
     return db_comment
 
-# --- NUEVO ENDPOINT PARA OBTENER SOLO INCIDENCIAS (FILTRANDO LA BITÁCORA) ---
+# --- ENDPOINT PARA OBTENER SOLO INCIDENCIAS (FILTRANDO LA BITÁCORA) ---
 @app.get("/incidencias/", response_model=List[BitacoraEntry], summary="Obtener Incidencias (filtradas de la Bitácora) (Protegido)")
 async def get_incidencias_filtered(
     db: AsyncSession = Depends(get_db),
@@ -2125,9 +2204,6 @@ async def get_incidencias_filtered(
             # Sin embargo, dado que `BitacoraEntry` no tiene una relación directa con `Analista`,
             # y la incidencia es solo un tipo de entrada, el filtro por `analista_id`
             # en este contexto es más complejo si queremos saber "quién la registró".
-            # Por ahora, nos basamos en la campaña.
-            # Si se necesita el analista que "registró" la incidencia, necesitaríamos
-            # añadir un `registrador_id` a `BitacoraEntry`.
             # Por simplicidad, si el analista_id se refiere al analista de la campaña,
             # lo haríamos así:
             # query = query.join(models.Campana).join(models.analistas_campanas).filter(models.analistas_campanas.c.analista_id == analista_id)
@@ -2143,4 +2219,240 @@ async def get_incidencias_filtered(
 
     incidencias = await db.execute(query)
     return incidencias.scalars().unique().all() # Usamos unique() para evitar duplicados si hay joins
+
+
+# --- NUEVOS ENDPOINTS PARA TAREAS GENERADAS POR AVISOS ---
+
+@app.post("/tareas_generadas_por_avisos/", response_model=TareaGeneradaPorAviso, status_code=status.HTTP_201_CREATED, summary="Crear una Tarea Generada por Aviso (Protegido por Supervisor/Responsable)")
+async def create_tarea_generada_por_aviso(
+    tarea: TareaGeneradaPorAvisoBase,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+):
+    """
+    Crea una nueva tarea que puede ser generada por un aviso.
+    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    """
+    analista_existente_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea.analista_asignado_id))
+    if not analista_existente_result.scalars().first():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista asignado no encontrado.")
+
+    if tarea.aviso_origen_id:
+        aviso_existente_result = await db.execute(select(models.Aviso).filter(models.Aviso.id == tarea.aviso_origen_id))
+        if not aviso_existente_result.scalars().first():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso de origen no encontrado.")
+
+    db_tarea = models.TareaGeneradaPorAviso(**tarea.model_dump())
+    db.add(db_tarea)
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al crear tarea generada por aviso: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear tarea generada por aviso: {e}"
+        )
+    await db.refresh(db_tarea)
+    # Cargar relaciones para la respuesta
+    result = await db.execute(
+        select(models.TareaGeneradaPorAviso)
+        .filter(models.TareaGeneradaPorAviso.id == db_tarea.id)
+        .options(
+            selectinload(models.TareaGeneradaPorAviso.analista_asignado),
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+        )
+    )
+    tarea_to_return = result.scalars().first()
+    if not tarea_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la tarea generada después de la creación.")
+    return tarea_to_return
+
+
+@app.get("/tareas_generadas_por_avisos/", response_model=List[TareaGeneradaPorAviso], summary="Obtener todas las Tareas Generadas por Avisos (Protegido)")
+async def get_all_tareas_generadas_por_avisos(
+    db: AsyncSession = Depends(get_db),
+    analista_id: Optional[int] = None,
+    aviso_origen_id: Optional[int] = None,
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Obtiene todas las tareas generadas por avisos, con filtros opcionales.
+    Requiere autenticación.
+    Un analista normal solo ve las tareas asignadas a él.
+    Supervisores y Responsables pueden ver todas las tareas.
+    """
+    query = select(models.TareaGeneradaPorAviso).options(
+        selectinload(models.TareaGeneradaPorAviso.analista_asignado),
+        selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+    )
+
+    if current_analista.role == UserRole.ANALISTA.value:
+        query = query.filter(models.TareaGeneradaPorAviso.analista_asignado_id == current_analista.id)
+    else:
+        if analista_id:
+            query = query.filter(models.TareaGeneradaPorAviso.analista_asignado_id == analista_id)
+        if aviso_origen_id:
+            query = query.filter(models.TareaGeneradaPorAviso.aviso_origen_id == aviso_origen_id)
+    
+    tareas = await db.execute(query)
+    return tareas.scalars().unique().all()
+
+
+@app.get("/tareas_generadas_por_avisos/{tarea_id}", response_model=TareaGeneradaPorAviso, summary="Obtener Tarea Generada por Aviso por ID (Protegido)")
+async def get_tarea_generada_por_aviso_by_id(
+    tarea_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Obtiene una tarea generada por aviso específica por su ID.
+    Requiere autenticación.
+    Un analista normal solo ve las tareas asignadas a él.
+    """
+    result = await db.execute(
+        select(models.TareaGeneradaPorAviso)
+        .filter(models.TareaGeneradaPorAviso.id == tarea_id)
+        .options(
+            selectinload(models.TareaGeneradaPorAviso.analista_asignado),
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+        )
+    )
+    tarea = result.scalars().first()
+    if not tarea:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea generada por aviso no encontrada.")
+    
+    if current_analista.role == UserRole.ANALISTA.value and tarea.analista_asignado_id != current_analista.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver esta tarea.")
+
+    return tarea
+
+
+@app.put("/tareas_generadas_por_avisos/{tarea_id}", response_model=TareaGeneradaPorAviso, summary="Actualizar una Tarea Generada por Aviso (Protegido)")
+async def update_tarea_generada_por_aviso(
+    tarea_id: int,
+    tarea_update: TareaGeneradaPorAvisoUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Actualiza una tarea generada por aviso existente.
+    Requiere autenticación.
+    Un Analista solo puede actualizar el progreso de sus propias tareas generadas.
+    Un Supervisor o Responsable pueden actualizar cualquier campo de cualquier tarea generada.
+    """
+    db_tarea_result = await db.execute(
+        select(models.TareaGeneradaPorAviso)
+        .filter(models.TareaGeneradaPorAviso.id == tarea_id)
+        .options(
+            selectinload(models.TareaGeneradaPorAviso.analista_asignado),
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+        )
+    )
+    tarea_existente = db_tarea_result.scalars().first()
+
+    if tarea_existente is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea generada por aviso no encontrada.")
+
+    update_data = tarea_update.model_dump(exclude_unset=True)
+
+    if current_analista.role == UserRole.ANALISTA.value:
+        if tarea_existente.analista_asignado_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar esta tarea. Solo puedes actualizar tus propias tareas generadas.")
+        
+        # Un analista solo puede actualizar el progreso
+        if "progreso" in update_data:
+            tarea_existente.progreso = update_data["progreso"].value # Asegurarse de guardar el valor del Enum
+        else:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Los analistas solo pueden actualizar el progreso de sus tareas generadas.")
+            
+    elif current_analista.role in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
+        if "analista_asignado_id" in update_data and update_data["analista_asignado_id"] != tarea_existente.analista_asignado_id:
+            analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == update_data["analista_asignado_id"]))
+            if analista_result.scalars().first() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {update_data['analista_asignado_id']} no encontrado.")
+            tarea_existente.analista_asignado_id = update_data["analista_asignado_id"]
+        
+        if "aviso_origen_id" in update_data and update_data["aviso_origen_id"] != tarea_existente.aviso_origen_id:
+            aviso_result = await db.execute(select(models.Aviso).filter(models.Aviso.id == update_data["aviso_origen_id"]))
+            if aviso_result.scalars().first() is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Aviso con ID {update_data['aviso_origen_id']} no encontrado.")
+            tarea_existente.aviso_origen_id = update_data["aviso_origen_id"]
+
+        for key, value in update_data.items():
+            if key not in ["analista_asignado_id", "aviso_origen_id"]:
+                if key == "progreso":
+                    setattr(tarea_existente, key, value.value) # Asegurarse de guardar el valor del Enum
+                else:
+                    setattr(tarea_existente, key, value)
+    
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar tareas generadas con tu rol actual.")
+
+    try:
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al actualizar tarea generada: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al actualizar tarea generada: {e}"
+        )
+    await db.refresh(tarea_existente)
+    result = await db.execute(
+        select(models.TareaGeneradaPorAviso)
+        .filter(models.TareaGeneradaPorAviso.id == tarea_existente.id)
+        .options(
+            selectinload(models.TareaGeneradaPorAviso.analista_asignado),
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+        )
+    )
+    tarea_to_return = result.scalars().first()
+    if not tarea_to_return:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la tarea generada después de la actualización.")
+    
+    return tarea_to_return
+
+@app.delete("/tareas_generadas_por_avisos/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea Generada por Aviso (Protegido por Supervisor)")
+async def delete_tarea_generada_por_aviso(
+    tarea_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR]))
+):
+    """
+    Elimina una tarea generada por aviso existente.
+    Requiere autenticación y rol de SUPERVISOR.
+    """
+    db_tarea_result = await db.execute(select(models.TareaGeneradaPorAviso).where(models.TareaGeneradaPorAviso.id == tarea_id))
+    tarea_a_eliminar = db_tarea_result.scalars().first()
+
+    if tarea_a_eliminar is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea generada por aviso no encontrada.")
+
+    try:
+        await db.delete(tarea_a_eliminar)
+        await db.commit()
+    except ProgrammingError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error de base de datos al eliminar tarea generada: {e}"
+        )
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al eliminar tarea generada: {e}"
+        )
+    return
 
