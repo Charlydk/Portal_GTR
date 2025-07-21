@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext'; // Importa useAuth
+import { Button, Spinner, Alert, Table } from 'react-bootstrap'; // Importa componentes de react-bootstrap
 
 function AvisosPage() {
   const [avisos, setAvisos] = useState([]);
@@ -75,11 +76,11 @@ function AvisosPage() {
       }
 
       // Usar un modal personalizado en lugar de alert
-      alert('Aviso eliminado con éxito.');
+      alert('Aviso eliminado con éxito.'); // Considerar reemplazar con un componente de notificación
       fetchAvisos(); // Recargar la lista de avisos
     } catch (err) {
       console.error("Error al eliminar aviso:", err);
-      alert(err.message || "No se pudo eliminar el aviso."); // Usar alert temporalmente
+      alert(err.message || "No se pudo eliminar el aviso."); // Considerar reemplazar con un componente de notificación
     }
   };
 
@@ -93,9 +94,9 @@ function AvisosPage() {
   if (loading) {
     return (
       <div className="container mt-4 text-center">
-        <div className="spinner-border text-primary" role="status">
+        <Spinner animation="border" role="status" className="text-primary">
           <span className="visually-hidden">Cargando avisos...</span>
-        </div>
+        </Spinner>
         <p>Cargando lista de avisos...</p>
       </div>
     );
@@ -104,9 +105,9 @@ function AvisosPage() {
   if (error) {
     return (
       <div className="container mt-4">
-        <div className="alert alert-danger" role="alert">
+        <Alert variant="danger">
           {error}
-        </div>
+        </Alert>
         {!authToken && (
           <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
         )}
@@ -125,8 +126,8 @@ function AvisosPage() {
       )}
       
       <div className="table-responsive">
-        <table className="table table-striped table-hover">
-          <thead>
+        {/* Aquí la corrección: <thead> va justo después de <Table> sin saltos de línea ni espacios */}
+        <Table striped bordered hover><thead>
             <tr>
               <th>ID</th>
               <th>Título</th>
@@ -139,7 +140,7 @@ function AvisosPage() {
           </thead>
           <tbody>
             {avisos.map((aviso) => (
-              <tr key={aviso.id}> {/* Línea 139 en tu código original */}
+              <tr key={aviso.id}>
                 <td>{aviso.id}</td>
                 <td>{aviso.titulo}</td>
                 <td>{aviso.contenido.substring(0, 50)}{aviso.contenido.length > 50 ? '...' : ''}</td>
@@ -153,21 +154,20 @@ function AvisosPage() {
                   {user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
                     <Link to={`/avisos/editar/${aviso.id}`} className="btn btn-warning btn-sm me-2">Editar</Link>
                   )}
-                  {/* Solo permite eliminar si el usuario actual es Supervisor */}
                   {user && user.role === 'SUPERVISOR' && (
-                    <button
+                    <Button
                       onClick={() => handleEliminarAviso(aviso.id)}
-                      className="btn btn-danger btn-sm"
+                      variant="danger" // Usando variant de Button de React-Bootstrap
+                      size="sm"
                     >
                       Eliminar
-                    </button>
+                    </Button>
                   )}
                 </td>
-                
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
     </div>
   );
