@@ -15,14 +15,13 @@ import CampanasPage from './pages/CampanasPage';
 import AsignacionCampanasPage from './pages/AsignacionCampanasPage';
 import FormularioAnalistaPage from './pages/FormularioAnalistaPage';
 import FormularioCampanaPage from './pages/FormularioCampanaPage';
-import FormularioAvisoPage from './pages/FormularioAvisoPage'; // Componente unificado para crear/editar aviso
+import FormularioAvisoPage from './pages/FormularioAvisoPage';
 import FormularioChecklistItemPage from './pages/FormularioChecklistItemPage';
-import FormularioTareaPage from './pages/FormularioTareaPage'; // ¡IMPORTACIÓN CORREGIDA!
+import FormularioTareaPage from './pages/FormularioTareaPage';
 import DetalleAnalistaPage from './pages/DetalleAnalistaPage';
 import DetalleCampanaPage from './pages/DetalleCampanaPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import RegisterPage from './pages/RegisterPage';
-// import RegistroIncidenciaPage from './pages/RegistroIncidenciaPage'; // ¡YA NO SE IMPORTA COMO PÁGINA!
 import ListaIncidenciasPage from './pages/ListaIncidenciasPage';
 import DetalleTareaGeneradaPage from './pages/DetalleTareaGeneradaPage';
 
@@ -106,34 +105,35 @@ function App() {
                 </PrivateRoute>
               }
             />
-            {/* Crear Tarea: Accesible por Supervisores y Responsables */}
+            {/* Crear Tarea: Accesible por Analistas, Supervisores y Responsables */}
             <Route
               path="/tareas/crear"
               element={
-                <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
                   <FormularioTareaPage />
                 </PrivateRoute>
               }
             />
-            {/* Editar Tarea: Accesible por Supervisores y Responsables */}
+            {/* Editar Tarea: Accesible por Analistas (sus propias), Supervisores y Responsables */}
             <Route
               path="/tareas/editar/:id"
               element={
-                <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
                   <FormularioTareaPage />
                 </PrivateRoute>
               }
             />
-            {/* Crear Checklist Item para Tarea: Accesible por Supervisores y Responsables */}
+            {/* Crear Checklist Item para Tarea: Accesible por Analistas (sus propias tareas), Supervisores y Responsables */}
             <Route
               path="/tareas/:tareaId/checklist_items/crear"
               element={
-                <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
                   <FormularioChecklistItemPage />
                 </PrivateRoute>
               }
             />
 
+            {/* Detalle de Tarea Generada por Aviso: Accesible por Analistas, Supervisores y Responsables */}
             <Route
               path="/tareas-generadas/:id"
               element={
@@ -142,12 +142,23 @@ function App() {
                 </PrivateRoute>
               }
             />
+            {/* Editar Tarea Generada por Aviso: Accesible por Analistas (sus propias), Supervisores y Responsables */}
+            {/* Se asume que FormularioTareaPage puede manejar la edición de tareas generadas o se creará uno específico */}
+            <Route
+              path="/tareas-generadas/editar/:id"
+              element={
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
+                  <FormularioTareaPage /> {/* Reutilizamos el mismo formulario de tarea */}
+                </PrivateRoute>
+              }
+            />
 
-            {/* Editar Checklist Item para Tarea: Accesible por Supervisores y Responsables */}
+
+            {/* Editar Checklist Item para Tarea: Accesible por Analistas (sus propias tareas), Supervisores y Responsables */}
             <Route
               path="/tareas/:tareaId/checklist_items/editar/:id"
               element={
-                <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
                   <FormularioChecklistItemPage />
                 </PrivateRoute>
               }
@@ -240,7 +251,6 @@ function App() {
             />
 
             {/* Rutas de Incidencias (solo la lista, el registro se hace en BitacoraCampana) */}
-            {/* La ruta para /incidencias/registrar se elimina de aquí */}
             <Route
               path="/incidencias"
               element={
@@ -249,11 +259,10 @@ function App() {
                 </PrivateRoute>
               }
             />
-  
+ 
             {/* Ruta para el caso de página no encontrada */}
             <Route path="*" element={<div>404 - Página no encontrada</div>} />
 
-                        
           </Routes>
         </div>
       </AuthProvider>

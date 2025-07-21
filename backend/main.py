@@ -881,25 +881,51 @@ async def eliminar_campana(
 
 # --- Endpoints para Tareas (Protegidos) ---
 
-@app.post("/tareas/", response_model=Tarea, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Tarea (Protegido por Supervisor/Responsable)")
+@app.post("/tareas/", response_model=Tarea, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Tarea (Protegido)")
 async def crear_tarea(
     tarea: TareaBase,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    current_analista: models.Analista = Depends(get_current_analista) # Ahora todos los roles autenticados pueden intentar crear
 ):
     """
     Crea una nueva tarea en el sistema y la guarda en la base de datos.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Requiere autenticación.
+    - Un Analista puede crear tareas para sí mismo:
+        - Si no tienen campana_id (tareas personales).
+        - Si tienen campana_id, el analista debe estar asignado a esa campaña.
+    - Un Supervisor o Responsable pueden crear tareas para cualquier analista y/o campaña.
     """
+    # Validar que el analista_id de la tarea existe
     analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea.analista_id))
     analista_existente = analista_result.scalars().first()
     if not analista_existente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Analista con ID {tarea.analista_id} no encontrado.")
 
-    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == tarea.campana_id))
-    campana_existente = campana_result.scalars().first()
-    if not campana_existente:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Campaña con ID {tarea.campana_id} no encontrada.")
+    # Validar la campaña si se proporciona
+    if tarea.campana_id:
+        campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == tarea.campana_id))
+        campana_existente = campana_result.scalars().first()
+        if not campana_existente:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Campaña con ID {tarea.campana_id} no encontrada.")
+
+    # Lógica de permisos
+    if current_analista.role == UserRole.ANALISTA.value:
+        # Un analista solo puede crear tareas para sí mismo
+        if tarea.analista_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Analista solo puede crear tareas para sí mismo.")
+        
+        # Si la tarea tiene campana_id, el analista debe estar asignado a esa campaña
+        if tarea.campana_id:
+            is_assigned_to_campaign = False
+            for assigned_campana in current_analista.campanas_asignadas:
+                if assigned_campana.id == tarea.campana_id:
+                    is_assigned_to_campaign = True
+                    break
+            if not is_assigned_to_campaign:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear tareas en esta campaña. No estás asignado a ella.")
+    
+    # Si es Supervisor o Responsable, no hay restricciones adicionales sobre a quién o qué campaña asignar.
+    # La validación de existencia de analista y campaña ya se hizo arriba.
 
     tarea_data_dict = tarea.model_dump()
     db_tarea = models.Tarea(
@@ -1127,15 +1153,17 @@ async def eliminar_tarea(
 
 # --- Endpoints para checklist tareas (Protegidos) ---
 
-@app.post("/checklist_items/", response_model=ChecklistItem, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo ChecklistItem (Protegido por Supervisor/Responsable)")
+@app.post("/checklist_items/", response_model=ChecklistItem, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo ChecklistItem (Protegido)")
 async def crear_checklist_item(
     item: ChecklistItemBase,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    current_analista: models.Analista = Depends(get_current_analista) # Ahora todos los roles autenticados pueden intentar crear
 ):
     """
     Crea un nuevo elemento de checklist asociado a una tarea.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Requiere autenticación.
+    - Un Analista puede crear ítems para tareas a las que está asignado.
+    - Un Supervisor o Responsable pueden crear ítems para cualquier tarea.
     """
     tarea_existente_result = await db.execute(
         select(models.Tarea)
@@ -1145,6 +1173,13 @@ async def crear_checklist_item(
     tarea_existente = tarea_existente_result.scalars().first()
     if tarea_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada para asociar el ChecklistItem")
+
+    # Lógica de permisos para Analistas
+    if current_analista.role == UserRole.ANALISTA.value:
+        if tarea_existente.analista_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear ítems de checklist para esta tarea. Solo puedes crear ítems para tus propias tareas.")
+    
+    # Si es Supervisor o Responsable, no hay restricciones adicionales.
 
     db_item = models.ChecklistItem(**item.model_dump())
     db.add(db_item)

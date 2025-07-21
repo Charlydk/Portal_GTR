@@ -1,8 +1,9 @@
-from pydantic import BaseModel
-from datetime import datetime, date
+from pydantic import BaseModel, EmailStr, Field # Importar EmailStr y Field
+from datetime import datetime, date, time # Importar time
 from typing import Optional, List
 import enum
 
+# --- Enums ---
 class UserRole(str, enum.Enum):
     ANALISTA = "ANALISTA"
     SUPERVISOR = "SUPERVISOR"
@@ -14,20 +15,26 @@ class ProgresoTarea(str, enum.Enum):
     COMPLETADA = "COMPLETADA"
     CANCELADA = "CANCELADA"
 
+class TipoIncidencia(str, enum.Enum): # Asegurarse de que este Enum esté definido si se usa en BitacoraEntry
+    ERROR = "ERROR"
+    CONSULTA = "CONSULTA"
+    MEJORA = "MEJORA"
+    OTRO = "OTRO"
+
 # --- Base Schemas (Input/Creation) ---
 class AnalistaBase(BaseModel):
     nombre: str
     apellido: str
-    email: str
+    email: EmailStr # CORREGIDO: Usar EmailStr para validación de email
     bms_id: int
     role: UserRole
     esta_activo: Optional[bool] = True
 
 class AnalistaCreate(AnalistaBase):
-    password: str
+    password: str = Field(..., min_length=6) # Añadir Field para min_length, si lo deseas
 
 class PasswordUpdate(BaseModel):
-    new_password: str
+    new_password: str = Field(..., min_length=6) # Añadir Field para min_length, si lo deseas
 
 class CampanaBase(BaseModel):
     nombre: str
@@ -41,7 +48,7 @@ class TareaBase(BaseModel):
     fecha_vencimiento: datetime
     progreso: ProgresoTarea
     analista_id: int
-    campana_id: int
+    campana_id: Optional[int] = None # CORREGIDO: campana_id ahora es opcional
 
 class TareaUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -53,7 +60,7 @@ class TareaUpdate(BaseModel):
 
 class ChecklistItemBase(BaseModel):
     tarea_id: int
-    descripcion: str
+    descripcion: str # CORREGIDO: Nombre del campo sin tilde
     completado: Optional[bool] = False
 
 class ChecklistItemUpdate(BaseModel):
@@ -72,7 +79,6 @@ class AvisoBase(BaseModel):
     fecha_vencimiento: Optional[datetime] = None
     creador_id: int
     campana_id: Optional[int] = None
-    # NUEVOS CAMPOS PARA AVISO
     requiere_tarea: Optional[bool] = False
     fecha_vencimiento_tarea: Optional[datetime] = None
 
@@ -83,18 +89,18 @@ class AcuseReciboCreate(BaseModel):
 class BitacoraEntryBase(BaseModel):
     campana_id: int
     fecha: date
-    hora: str # Formato "HH:MM"
+    hora: time # CORREGIDO: Usar datetime.time para la hora
     comentario: Optional[str] = None
     es_incidencia: Optional[bool] = False
-    tipo_incidencia: Optional[str] = None
+    tipo_incidencia: Optional[TipoIncidencia] = None # Usar el Enum TipoIncidencia
     comentario_incidencia: Optional[str] = None
 
 class BitacoraEntryUpdate(BaseModel):
     fecha: Optional[date] = None
-    hora: Optional[str] = None
+    hora: Optional[time] = None # CORREGIDO: Usar datetime.time para la hora
     comentario: Optional[str] = None
     es_incidencia: Optional[bool] = None
-    tipo_incidencia: Optional[str] = None
+    tipo_incidencia: Optional[TipoIncidencia] = None
     comentario_incidencia: Optional[str] = None
 
 class BitacoraGeneralCommentBase(BaseModel):
@@ -109,9 +115,9 @@ class TareaGeneradaPorAvisoBase(BaseModel):
     titulo: str
     descripcion: Optional[str] = None
     fecha_vencimiento: Optional[datetime] = None
-    progreso: Optional[ProgresoTarea] = ProgresoTarea.PENDIENTE # Por defecto
+    progreso: ProgresoTarea = ProgresoTarea.PENDIENTE # CORREGIDO: Quitar Optional si tiene default
     analista_asignado_id: int
-    aviso_origen_id: Optional[int] = None # Para vincular a un aviso
+    aviso_origen_id: Optional[int] = None
 
 class TareaGeneradaPorAvisoUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -127,7 +133,7 @@ class AnalistaSimple(BaseModel):
     id: int
     nombre: str
     apellido: str
-    email: str
+    email: EmailStr # CORREGIDO: Usar EmailStr
     bms_id: int
     role: UserRole
     esta_activo: bool
@@ -139,7 +145,7 @@ class AnalistaMe(BaseModel):
     id: int
     nombre: str
     apellido: str
-    email: str
+    email: EmailStr # CORREGIDO: Usar EmailStr
     bms_id: int
     role: UserRole
     esta_activo: bool
@@ -183,10 +189,10 @@ class TareaListOutput(BaseModel):
     fecha_vencimiento: datetime
     progreso: ProgresoTarea
     analista_id: int
-    campana_id: int
+    campana_id: Optional[int] = None # CORREGIDO: campana_id puede ser nulo en la salida
     fecha_creacion: datetime
     analista: AnalistaSimple
-    campana: CampanaSimple
+    campana: Optional[CampanaSimple] = None # CORREGIDO: campana puede ser nulo en la salida
     class Config:
         from_attributes = True
 
@@ -214,7 +220,6 @@ class AvisoSimple(BaseModel):
     fecha_creacion: datetime
     creador_id: int
     campana_id: Optional[int] = None
-    # Nuevos campos en Simple
     requiere_tarea: bool
     fecha_vencimiento_tarea: Optional[datetime] = None
     class Config:
@@ -230,7 +235,6 @@ class AvisoListOutput(BaseModel):
     campana_id: Optional[int] = None
     creador: AnalistaSimple
     campana: Optional[CampanaSimple] = None
-    # Nuevos campos en ListOutput
     requiere_tarea: bool
     fecha_vencimiento_tarea: Optional[datetime] = None
     class Config:
@@ -248,10 +252,10 @@ class AcuseReciboAvisoSimple(BaseModel):
 class BitacoraEntrySimple(BaseModel):
     id: int
     fecha: date
-    hora: str
+    hora: time # CORREGIDO: Usar datetime.time
     comentario: Optional[str] = None
     es_incidencia: Optional[bool] = False
-    tipo_incidencia: Optional[str] = None
+    tipo_incidencia: Optional[TipoIncidencia] = None # Usar el Enum TipoIncidencia
     comentario_incidencia: Optional[str] = None
     fecha_creacion: datetime
     fecha_ultima_actualizacion: datetime
@@ -296,7 +300,7 @@ class Tarea(TareaBase):
     id: int
     fecha_creacion: datetime
     analista: "AnalistaSimple"
-    campana: "CampanaSimple"
+    campana: Optional["CampanaSimple"] = None # CORREGIDO: campana puede ser nulo
     checklist_items: List["ChecklistItemSimple"] = []
     class Config:
         from_attributes = True
@@ -348,6 +352,7 @@ class BitacoraEntry(BitacoraEntryBase):
     id: int
     fecha_creacion: datetime
     fecha_ultima_actualizacion: datetime
+    campana: "CampanaSimple" # Añadir relación con Campana
     class Config:
         from_attributes = True
 
@@ -355,6 +360,7 @@ class BitacoraGeneralComment(BitacoraGeneralCommentBase):
     id: int
     fecha_creacion: datetime
     fecha_ultima_actualizacion: datetime
+    campana: "CampanaSimple" # Añadir relación con Campana
     class Config:
         from_attributes = True
 
