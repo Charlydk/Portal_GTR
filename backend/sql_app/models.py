@@ -44,14 +44,13 @@ class Analista(Base):
     comentarios = relationship("ComentarioCampana", back_populates="analista")
     avisos_creados = relationship("Aviso", back_populates="creador")
     acuses_recibo_avisos = relationship("AcuseReciboAviso", back_populates="analista")
+    tareas_generadas_por_avisos = relationship("TareaGeneradaPorAviso", back_populates="analista_asignado") # Nueva relación
     
-    # ¡ESTA RELACIÓN ES LA CLAVE! Asegúrate de que esté exactamente así.
     campanas_asignadas = relationship(
         "Campana",
         secondary=analistas_campanas,
         back_populates="analistas_asignados"
     )
-    # El campo de incidencias_registradas fue eliminado correctamente
 
 
 class Campana(Base):
@@ -68,7 +67,6 @@ class Campana(Base):
     comentarios = relationship("ComentarioCampana", back_populates="campana")
     avisos = relationship("Aviso", back_populates="campana")
     
-    # ¡ESTA RELACIÓN TAMBIÉN ES CLAVE! Asegúrate de que esté exactamente así.
     analistas_asignados = relationship(
         "Analista",
         secondary=analistas_campanas,
@@ -129,15 +127,20 @@ class Aviso(Base):
     id = Column(Integer, primary_key=True, index=True)
     titulo = Column(String)
     contenido = Column(Text)
-    fecha_vencimiento = Column(DateTime(timezone=True), nullable=True)
+    fecha_vencimiento = Column(DateTime(timezone=True), nullable=True) # Fecha de vencimiento del aviso en sí
     fecha_creacion = Column(DateTime(timezone=True), server_default=func.now())
 
     creador_id = Column(Integer, ForeignKey("analistas.id"))
-    campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=True)
+    campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=True) # Un aviso puede no tener campaña
+
+    # NUEVOS CAMPOS PARA LA FUNCIONALIDAD DE TAREAS GENERADAS
+    requiere_tarea = Column(Boolean, default=False) # Si este aviso debe generar una tarea
+    fecha_vencimiento_tarea = Column(DateTime(timezone=True), nullable=True) # Fecha de vencimiento para la tarea generada
 
     creador = relationship("Analista", back_populates="avisos_creados")
     campana = relationship("Campana", back_populates="avisos")
     acuses_recibo = relationship("AcuseReciboAviso", back_populates="aviso", cascade="all, delete-orphan")
+    tareas_generadas = relationship("TareaGeneradaPorAviso", back_populates="aviso_origen") # Nueva relación
 
 
 class AcuseReciboAviso(Base):
@@ -162,7 +165,6 @@ class BitacoraEntry(Base):
     hora = Column(String, nullable=False) # Formato "HH:MM"
     comentario = Column(Text, nullable=True) # Comentario general de la entrada
 
-    # ¡NUEVOS CAMPOS PARA INCIDENCIAS!
     es_incidencia = Column(Boolean, default=False, nullable=False)
     tipo_incidencia = Column(String, nullable=True) # Ej. "tecnica", "operativa", "otra"
     comentario_incidencia = Column(Text, nullable=True) # Comentario específico de la incidencia
@@ -170,10 +172,8 @@ class BitacoraEntry(Base):
     fecha_creacion = Column(DateTime(timezone=True), server_default=func.now())
     fecha_ultima_actualizacion = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relación
     campana = relationship("Campana", back_populates="bitacora_entries")
 
-    # Restricción única por campana, fecha y hora
     __table_args__ = (UniqueConstraint('campana_id', 'fecha', 'hora', name='_campana_fecha_hora_uc'),)
 
 
@@ -185,11 +185,22 @@ class BitacoraGeneralComment(Base):
     fecha_creacion = Column(DateTime(timezone=True), server_default=func.now())
     fecha_ultima_actualizacion = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relación
     campana = relationship("Campana", back_populates="bitacora_general_comment")
 
-# --- MODELO DE INCIDENCIA ELIMINADO ---
-# class Incidencia(Base):
-#     __tablename__ = "incidencias"
-#     # ... (contenido anterior del modelo Incidencia) ...
-#     # Este modelo ya no es necesario, su funcionalidad se integra en BitacoraEntry
+
+# --- NUEVO MODELO PARA TAREAS GENERADAS POR AVISOS ---
+class TareaGeneradaPorAviso(Base):
+    __tablename__ = "tareas_generadas_por_avisos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    titulo = Column(String, nullable=False)
+    descripcion = Column(Text, nullable=True)
+    fecha_creacion = Column(DateTime(timezone=True), server_default=func.now())
+    fecha_vencimiento = Column(DateTime(timezone=True), nullable=True) # Hereda de Aviso.fecha_vencimiento_tarea
+    progreso = Column(String, default=ProgresoTarea.PENDIENTE.value)
+    
+    analista_asignado_id = Column(Integer, ForeignKey("analistas.id")) # El analista al que se le asigna esta tarea
+    aviso_origen_id = Column(Integer, ForeignKey("avisos.id"), nullable=True) # El aviso que originó esta tarea
+
+    analista_asignado = relationship("Analista", back_populates="tareas_generadas_por_avisos")
+    aviso_origen = relationship("Aviso", back_populates="tareas_generadas")

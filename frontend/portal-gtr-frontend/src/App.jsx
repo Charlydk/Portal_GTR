@@ -24,6 +24,7 @@ import DetalleTareaPage from './pages/DetalleTareaPage';
 import RegisterPage from './pages/RegisterPage';
 // import RegistroIncidenciaPage from './pages/RegistroIncidenciaPage'; // ¡YA NO SE IMPORTA COMO PÁGINA!
 import ListaIncidenciasPage from './pages/ListaIncidenciasPage';
+import DetalleTareaGeneradaPage from './pages/DetalleTareaGeneradaPage';
 
 
 function App() {
@@ -132,6 +133,16 @@ function App() {
                 </PrivateRoute>
               }
             />
+
+            <Route
+              path="/tareas-generadas/:id"
+              element={
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
+                  <DetalleTareaGeneradaPage />
+                </PrivateRoute>
+              }
+            />
+
             {/* Editar Checklist Item para Tarea: Accesible por Supervisores y Responsables */}
             <Route
               path="/tareas/:tareaId/checklist_items/editar/:id"
@@ -242,7 +253,7 @@ function App() {
             {/* Ruta para el caso de página no encontrada */}
             <Route path="*" element={<div>404 - Página no encontrada</div>} />
 
-            
+                        
           </Routes>
         </div>
       </AuthProvider>

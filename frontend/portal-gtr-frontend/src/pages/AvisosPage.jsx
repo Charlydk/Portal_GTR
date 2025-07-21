@@ -163,7 +163,7 @@ function AvisosPage() {
                     </button>
                   )}
                 </td>
-                {/* ELIMINADO: {" "} que causaba el error de hidratación */}
+                
               </tr>
             ))}
           </tbody>
