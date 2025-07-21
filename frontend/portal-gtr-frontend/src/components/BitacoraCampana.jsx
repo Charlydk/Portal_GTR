@@ -1,360 +1,343 @@
 // src/components/BitacoraCampana.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Form, Table, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
+import { Card, Form, Button, Alert, Spinner, Table, Badge, Row, Col } from 'react-bootstrap';
+import RegistroIncidenciaForm from './RegistroIncidenciaForm'; // Importa el nuevo componente de formulario
 
-function BitacoraCampana({ campanaId, initialGeneralComment }) { // initialBitacoraEntries ya no es necesario aquí
-    const { authToken, user } = useAuth();
-    const [bitacoraEntries, setBitacoraEntries] = useState([]);
-    const [generalComment, setGeneralComment] = useState('');
-    const [editingEntryId, setEditingEntryId] = useState(null);
-    const [currentEntryComment, setCurrentEntryComment] = useState('');
-    const [currentGeneralComment, setCurrentGeneralComment] = useState('');
-    const [isSaving, setIsSaving] = useState(false);
-    const [loadingEntries, setLoadingEntries] = useState(true); // Nuevo estado de carga para las entradas
-    const [error, setError] = useState(null);
-    const [successMessage, setSuccessMessage] = useState(null);
+const BitacoraCampana = ({ campanaId, campanaNombre }) => {
+  const { user, authToken, loading: authLoading } = useAuth();
+  const [bitacoraEntries, setBitacoraEntries] = useState([]);
+  const [generalComment, setGeneralComment] = useState('');
+  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]); // Fecha actual en YYYY-MM-DD
+  const [newEntryComment, setNewEntryComment] = useState('');
+  const [newEntryHour, setNewEntryHour] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [submittingEntry, setSubmittingEntry] = useState(false);
+  const [submittingComment, setSubmittingComment] = useState(false);
 
-    // Estado para la fecha seleccionada, inicializado a hoy
-    const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); // Formato YYYY-MM-DD
+  // Generar opciones de horario cada 30 minutos
+  const generarOpcionesHorario = () => {
+    const opciones = [];
+    for (let h = 0; h < 24; h++) {
+      for (let m = 0; m < 60; m += 30) {
+        const hora = String(h).padStart(2, '0');
+        const minuto = String(m).padStart(2, '0');
+        opciones.push(`${hora}:${minuto}`);
+      }
+    }
+    return opciones;
+  };
 
-    // Generar las franjas horarias de 00:00 a 23:30 en intervalos de 30 minutos
-    const generateTimeSlots = useCallback(() => {
-        const slots = [];
-        for (let h = 0; h < 24; h++) {
-            for (let m = 0; m < 60; m += 30) {
-                const hour = String(h).padStart(2, '0');
-                const minute = String(m).padStart(2, '0');
-                slots.push(`${hour}:${minute}`);
-            }
+  const isSupervisorOrResponsable = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
+
+  // Fetch Bitacora Entries for the selected date
+  const fetchBitacoraEntries = useCallback(async () => {
+    if (!authToken || !campanaId || !currentDate) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/campanas/${campanaId}/bitacora?fecha=${currentDate}`, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al cargar entradas de bitácora: ${response.statusText}`);
+      }
+      const data = await response.json();
+      setBitacoraEntries(data);
+    } catch (err) {
+      console.error("Error fetching bitacora entries:", err);
+      setError(err.message || "No se pudieron cargar las entradas de bitácora.");
+    } finally {
+      setLoading(false);
+    }
+  }, [authToken, campanaId, currentDate]);
+
+  // Fetch General Comment
+  const fetchGeneralComment = useCallback(async () => {
+    if (!authToken || !campanaId) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/campanas/${campanaId}/bitacora_general_comment`, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // ¡CORRECCIÓN AQUÍ! Verificar si data no es null antes de acceder a .comentario
+        if (data) { 
+          setGeneralComment(data.comentario || '');
+        } else {
+          setGeneralComment(''); // Si data es null (no hay comentario), establecerlo como cadena vacía
         }
-        return slots;
-    }, []);
+      } else if (response.status === 404) {
+        setGeneralComment(''); // No hay comentario general aún
+      } else {
+        const errorData = await response.json();
+        console.error("Error fetching general comment:", errorData.detail || response.statusText);
+        setError(errorData.detail || "No se pudo cargar el comentario general.");
+      }
+    } catch (err) {
+      console.error("Error fetching general comment:", err);
+      setError(err.message || "No se pudo cargar el comentario general.");
+    }
+  }, [authToken, campanaId]);
 
-    const timeSlots = generateTimeSlots();
+  useEffect(() => {
+    if (!authLoading && user && campanaId) {
+      fetchBitacoraEntries();
+      fetchGeneralComment();
+    }
+  }, [authLoading, user, campanaId, fetchBitacoraEntries, fetchGeneralComment]);
 
-    // Función para cargar las entradas de bitácora para la fecha seleccionada
-    const fetchBitacoraEntries = useCallback(async () => {
-        if (!authToken || !user || !campanaId || !selectedDate) {
-            setLoadingEntries(false);
-            return;
-        }
+  // Handle new bitacora entry submission
+  const handleNewEntrySubmit = async (e) => {
+    e.preventDefault();
+    setSubmittingEntry(true);
+    setError(null);
+    setSuccess(null);
 
-        setLoadingEntries(true);
-        setError(null);
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/campanas/${campanaId}/bitacora?fecha=${selectedDate}`, {
-                headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                },
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `Error al cargar entradas de bitácora: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            setBitacoraEntries(data);
-        } catch (err) {
-            console.error("Error al cargar entradas de bitácora:", err);
-            setError(err.message || "No se pudieron cargar las entradas de bitácora para esta fecha.");
-        } finally {
-            setLoadingEntries(false);
-        }
-    }, [authToken, user, campanaId, selectedDate]);
-
-    // Efecto para cargar las entradas de bitácora cuando cambian las dependencias
-    useEffect(() => {
-        fetchBitacoraEntries();
-    }, [fetchBitacoraEntries]);
-
-    // Efecto para inicializar el comentario general
-    useEffect(() => {
-        if (initialGeneralComment) {
-            setGeneralComment(initialGeneralComment.comentario || '');
-            setCurrentGeneralComment(initialGeneralComment.comentario || '');
-        }
-    }, [initialGeneralComment]);
-
-    // Función para manejar la edición de una entrada de bitácora
-    const handleEditEntry = (entry) => {
-        // Usamos una combinación de ID y hora para la clave de edición,
-        // o 'new' + hora para nuevas entradas que aún no tienen ID
-        setEditingEntryId(entry ? entry.id : `new-${selectedDate}-${entry.hora}`);
-        setCurrentEntryComment(entry ? entry.comentario : '');
+    const newEntry = {
+      campana_id: campanaId,
+      fecha: currentDate,
+      hora: newEntryHour,
+      comentario: newEntryComment,
+      es_incidencia: false, // Por defecto, no es una incidencia desde este formulario
+      tipo_incidencia: null,
+      comentario_incidencia: null,
     };
 
-    // Función para cancelar la edición
-    const handleCancelEdit = () => {
-        setEditingEntryId(null);
-        setCurrentEntryComment('');
-    };
+    try {
+      const response = await fetch(`${API_BASE_URL}/bitacora_entries/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(newEntry),
+      });
 
-    // Función para guardar una entrada de bitácora
-    const handleSaveEntry = async (hora) => {
-        if (!authToken || !user || isSaving) return;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al añadir entrada de bitácora: ${response.statusText}`);
+      }
 
-        setIsSaving(true);
-        setError(null);
-        setSuccessMessage(null);
+      setSuccess('Entrada de bitácora añadida con éxito!');
+      setNewEntryComment('');
+      setNewEntryHour('');
+      fetchBitacoraEntries(); // Refresh entries
+    } catch (err) {
+      console.error('Error adding bitacora entry:', err);
+      setError(err.message || 'Hubo un error al añadir la entrada de bitácora.');
+    } finally {
+      setSubmittingEntry(false);
+      setTimeout(() => { setSuccess(null); setError(null); }, 5000);
+    }
+  };
 
-        const existingEntry = bitacoraEntries.find(entry => entry.hora === hora);
-        const method = existingEntry ? 'PUT' : 'POST';
-        const url = existingEntry ? `${API_BASE_URL}/bitacora_entries/${existingEntry.id}` : `${API_BASE_URL}/bitacora_entries/`;
-        
-        const payload = {
-            campana_id: campanaId,
-            fecha: selectedDate, // ¡Ahora enviamos la fecha!
-            hora: hora,
-            comentario: currentEntryComment
-        };
+  // Handle general comment update
+  const handleGeneralCommentSubmit = async (e) => {
+    e.preventDefault();
+    setSubmittingComment(true);
+    setError(null);
+    setSuccess(null);
 
-        try {
-            const response = await fetch(url, {
-                method: method,
-                headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload),
-            });
+    try {
+      const response = await fetch(`${API_BASE_URL}/campanas/${campanaId}/bitacora_general_comment`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ comentario: generalComment }),
+      });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `Error al guardar la entrada de bitácora: ${response.statusText}`);
-            }
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al actualizar comentario general: ${response.statusText}`);
+      }
 
-            const savedEntry = await response.json();
-            
-            // Refrescar las entradas después de guardar
-            await fetchBitacoraEntries();
-            
-            handleCancelEdit(); // Salir del modo edición
-            setSuccessMessage("Entrada de bitácora guardada con éxito.");
+      setSuccess('Comentario general actualizado con éxito!');
+      fetchGeneralComment(); // Refresh comment
+    } catch (err) {
+      console.error('Error updating general comment:', err);
+      setError(err.message || 'Hubo un error al actualizar el comentario general.');
+    } finally {
+      setSubmittingComment(false);
+      setTimeout(() => { setSuccess(null); setError(null); }, 5000);
+    }
+  };
 
-        } catch (err) {
-            console.error("Error al guardar entrada de bitácora:", err);
-            setError(err.message || "No se pudo guardar la entrada de bitácora.");
-        } finally {
-            setIsSaving(false);
-            setTimeout(() => { setSuccessMessage(null); setError(null); }, 5000);
-        }
-    };
+  // Callback para cuando se registra una incidencia desde el formulario
+  const handleIncidenciaSuccess = (data) => {
+    setSuccess('Incidencia registrada con éxito en la bitácora!');
+    fetchBitacoraEntries(); // Refrescar las entradas de bitácora para incluir la nueva incidencia
+    setTimeout(() => { setSuccess(null); }, 5000);
+  };
 
-    // Función para eliminar una entrada de bitácora
-    const handleDeleteEntry = async (entryId) => {
-        if (!authToken || !user || isSaving) return;
+  const handleIncidenciaError = (err) => {
+    setError(err.message || 'Hubo un error al registrar la incidencia.');
+    setTimeout(() => { setError(null); }, 5000);
+  };
 
-        if (!window.confirm("¿Está seguro de que desea eliminar esta entrada de bitácora?")) {
-            return;
-        }
-
-        setIsSaving(true);
-        setError(null);
-        setSuccessMessage(null);
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/bitacora_entries/${entryId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                },
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `Error al eliminar la entrada de bitácora: ${response.statusText}`);
-            }
-
-            // Refrescar las entradas después de eliminar
-            await fetchBitacoraEntries();
-            setSuccessMessage("Entrada de bitácora eliminada con éxito.");
-
-        } catch (err) {
-            console.error("Error al eliminar entrada de bitácora:", err);
-            setError(err.message || "No se pudo eliminar la entrada de bitácora.");
-        } finally {
-            setIsSaving(false);
-            setTimeout(() => { setSuccessMessage(null); setError(null); }, 5000);
-        }
-    };
-
-    // Función para guardar el comentario general
-    const handleSaveGeneralComment = async () => {
-        if (!authToken || !user || isSaving) return;
-
-        setIsSaving(true);
-        setError(null);
-        setSuccessMessage(null);
-
-        const url = `${API_BASE_URL}/campanas/${campanaId}/bitacora_general_comment`;
-        const payload = {
-            campana_id: campanaId,
-            comentario: currentGeneralComment
-        };
-
-        try {
-            const response = await fetch(url, {
-                method: 'PUT', // Siempre PUT para upsert
-                headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `Error al guardar el comentario general: ${response.statusText}`);
-            }
-
-            const savedComment = await response.json();
-            setGeneralComment(savedComment.comentario); // Actualizar el estado del comentario general
-            setSuccessMessage("Comentario general guardado con éxito.");
-
-        } catch (err) {
-            console.error("Error al guardar comentario general:", err);
-            setError(err.message || "No se pudo guardar el comentario general.");
-        } finally {
-            setIsSaving(false);
-            setTimeout(() => { setSuccessMessage(null); setError(null); }, 5000);
-        }
-    };
-
-    // Determinar permisos para editar entradas de bitácora (cualquier rol puede editar sus propias asignadas campañas)
-    const canEditBitacoraEntry = user && (user.role === 'ANALISTA' || user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
-    // Determinar permisos para editar el comentario general (solo Supervisor o Responsable)
-    const canEditGeneralComment = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
-
+  if (loading) {
     return (
-        <div className="mt-4">
-            {error && <Alert variant="danger">{error}</Alert>}
-            {successMessage && <Alert variant="success">{successMessage}</Alert>}
-
-            <h4>Bitácora Diaria</h4>
-            <Form.Group className="mb-3">
-                <Form.Label>Seleccionar Fecha:</Form.Label>
-                <Form.Control
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    disabled={isSaving}
-                />
-            </Form.Group>
-
-            {loadingEntries ? (
-                <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '200px' }}>
-                    <Spinner animation="border" role="status">
-                        <span className="visually-hidden">Cargando entradas de bitácora...</span>
-                    </Spinner>
-                </div>
-            ) : (
-                <Table striped bordered hover responsive className="mb-5">
-                    <thead>
-                        <tr>
-                            <th className="w-25">Hora</th>
-                            <th>Comentario</th>
-                            <th className="w-25">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {timeSlots.map(slot => {
-                            const entry = bitacoraEntries.find(e => e.hora === slot);
-                            // La clave de edición ahora debe incluir la fecha para nuevas entradas
-                            const isCurrentlyEditing = editingEntryId === (entry ? entry.id : `new-${selectedDate}-${slot}`);
-
-                            return (
-                                <tr key={slot}>
-                                    <td>{slot}</td>
-                                    <td>
-                                        {isCurrentlyEditing ? (
-                                            <Form.Control
-                                                as="textarea"
-                                                rows={2}
-                                                value={currentEntryComment}
-                                                onChange={(e) => setCurrentEntryComment(e.target.value)}
-                                                disabled={isSaving}
-                                            />
-                                        ) : (
-                                            entry?.comentario || '(Sin comentario)'
-                                        )}
-                                    </td>
-                                    <td>
-                                        {canEditBitacoraEntry && (
-                                            isCurrentlyEditing ? (
-                                                <>
-                                                    <Button
-                                                        variant="success"
-                                                        size="sm"
-                                                        onClick={() => handleSaveEntry(slot)}
-                                                        disabled={isSaving}
-                                                        className="me-2"
-                                                    >
-                                                        {isSaving ? <Spinner as="span" animation="border" size="sm" /> : 'Guardar'}
-                                                    </Button>
-                                                    <Button
-                                                        variant="secondary"
-                                                        size="sm"
-                                                        onClick={handleCancelEdit}
-                                                        disabled={isSaving}
-                                                    >
-                                                        Cancelar
-                                                    </Button>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Button
-                                                        variant="info"
-                                                        size="sm"
-                                                        onClick={() => handleEditEntry(entry || { hora: slot, comentario: '' })}
-                                                        disabled={isSaving}
-                                                        className="me-2"
-                                                    >
-                                                        {entry ? 'Editar' : 'Añadir'}
-                                                    </Button>
-                                                    {entry && (
-                                                        <Button
-                                                            variant="danger"
-                                                            size="sm"
-                                                            onClick={() => handleDeleteEntry(entry.id)}
-                                                            disabled={isSaving}
-                                                        >
-                                                            Eliminar
-                                                        </Button>
-                                                    )}
-                                                </>
-                                            )
-                                        )}
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </Table>
-            )}
-
-            <h4 className="mt-5">Comentario General de la Campana</h4>
-            <Form.Group className="mb-3">
-                <Form.Label>Comentario General</Form.Label>
-                <Form.Control
-                    as="textarea"
-                    rows={4}
-                    value={currentGeneralComment}
-                    onChange={(e) => setCurrentGeneralComment(e.target.value)}
-                    disabled={!canEditGeneralComment || isSaving}
-                    placeholder="Ingrese un comentario general para esta campaña..."
-                />
-            </Form.Group>
-            {canEditGeneralComment && (
-                <Button variant="primary" onClick={handleSaveGeneralComment} disabled={isSaving}>
-                    {isSaving ? <Spinner as="span" animation="border" size="sm" /> : 'Guardar Comentario General'}
-                </Button>
-            )}
-        </div>
+      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '200px' }}>
+        <Spinner animation="border" role="status">
+          <span className="visually-hidden">Cargando bitácora...</span>
+        </Spinner>
+      </div>
     );
-}
+  }
+
+  return (
+    <div>
+      <h3 className="mb-3 text-secondary">Bitácora Diaria de Campaña: {campanaNombre}</h3>
+
+      {error && <Alert variant="danger">{error}</Alert>}
+      {success && <Alert variant="success">{success}</Alert>}
+
+      {/* Selector de Fecha */}
+      <Card className="shadow-sm p-3 mb-4">
+        <Form.Group as={Row} className="align-items-center">
+          <Form.Label column sm="3">Seleccionar Fecha:</Form.Label>
+          <Col sm="9">
+            <Form.Control
+              type="date"
+              value={currentDate}
+              onChange={(e) => setCurrentDate(e.target.value)}
+            />
+          </Col>
+        </Form.Group>
+      </Card>
+
+      {/* Formulario para Comentario General (Solo para Supervisor/Responsable) */}
+      {isSupervisorOrResponsable && (
+        <Card className="shadow-sm p-4 mb-4">
+          <h4 className="mb-4 text-primary">Comentario General de la Bitácora</h4>
+          <Form onSubmit={handleGeneralCommentSubmit}>
+            <Form.Group className="mb-3">
+              <Form.Label htmlFor="generalComment">Comentario General:</Form.Label>
+              <Form.Control
+                as="textarea"
+                id="generalComment"
+                rows="3"
+                value={generalComment}
+                onChange={(e) => setGeneralComment(e.target.value)}
+                disabled={submittingComment}
+              />
+            </Form.Group>
+            <Button
+              type="submit"
+              variant="info"
+              disabled={submittingComment}
+            >
+              {submittingComment ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Guardar Comentario General'}
+            </Button>
+          </Form>
+        </Card>
+      )}
+
+      {/* Formulario para Registrar Nueva Entrada de Bitácora (no incidencia) */}
+      <Card className="shadow-sm p-4 mb-4">
+        <h4 className="mb-4 text-primary">Añadir Nueva Entrada a la Bitácora</h4>
+        <Form onSubmit={handleNewEntrySubmit}>
+          <Form.Group className="mb-3">
+            <Form.Label htmlFor="newEntryHour">Hora:</Form.Label>
+            <Form.Select
+              id="newEntryHour"
+              value={newEntryHour}
+              onChange={(e) => setNewEntryHour(e.target.value)}
+              required
+              disabled={submittingEntry}
+            >
+              <option value="">Selecciona una hora</option>
+              {generarOpcionesHorario().map((hora) => (
+                <option key={hora} value={hora}>{hora}</option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+
+          <Form.Group className="mb-3">
+            <Form.Label htmlFor="newEntryComment">Comentario de la Entrada:</Form.Label>
+            <Form.Control
+              as="textarea"
+              id="newEntryComment"
+              rows="3"
+              value={newEntryComment}
+              onChange={(e) => setNewEntryComment(e.target.value)}
+              required
+              disabled={submittingEntry}
+            />
+          </Form.Group>
+
+          <Button
+            type="submit"
+            variant="primary"
+            className="w-100 mt-3"
+            disabled={submittingEntry}
+          >
+            {submittingEntry ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Añadir Entrada'}
+          </Button>
+        </Form>
+      </Card>
+
+      {/* Formulario para Registrar Incidencia (usando el nuevo componente) */}
+      {/* Solo mostramos el formulario de incidencia si el usuario tiene permisos */}
+      {user && (user.role === 'ANALISTA' || isSupervisorOrResponsable) && (
+        <RegistroIncidenciaForm
+          campanaId={campanaId}
+          onSuccess={handleIncidenciaSuccess}
+          onError={handleIncidenciaError}
+        />
+      )}
+
+      {/* Tabla de Entradas de Bitácora */}
+      <Card className="shadow-sm p-4">
+        <h4 className="mb-4 text-secondary">Entradas de Bitácora para {currentDate}</h4>
+        {bitacoraEntries.length === 0 ? (
+          <Alert variant="info">No hay entradas de bitácora para esta fecha.</Alert>
+        ) : (
+          <Table striped bordered hover responsive>
+            <thead>
+              <tr>
+                <th>Hora</th>
+                <th>Tipo</th>
+                <th>Comentario</th>
+                <th>Comentario Incidencia</th>
+                <th>Fecha Creación</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bitacoraEntries.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.hora}</td>
+                  <td>
+                    {entry.es_incidencia ? (
+                      <Badge bg="danger">{entry.tipo_incidencia || 'Incidencia'}</Badge>
+                    ) : (
+                      <Badge bg="primary">Normal</Badge>
+                    )}
+                  </td>
+                  <td>{entry.comentario || 'N/A'}</td>
+                  <td>{entry.comentario_incidencia || 'N/A'}</td>
+                  <td>{new Date(entry.fecha_creacion).toLocaleTimeString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+    </div>
+  );
+};
 
 export default BitacoraCampana;

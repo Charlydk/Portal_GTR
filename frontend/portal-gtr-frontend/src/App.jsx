@@ -22,8 +22,8 @@ import DetalleAnalistaPage from './pages/DetalleAnalistaPage';
 import DetalleCampanaPage from './pages/DetalleCampanaPage';
 import DetalleTareaPage from './pages/DetalleTareaPage';
 import RegisterPage from './pages/RegisterPage';
-import RegistroIncidenciaPage from './pages/RegistroIncidenciaPage';
-import ListaIncidenciasPage from './pages/ListaIncidenciasPage'; // ¡NUEVA IMPORTACIÓN!
+// import RegistroIncidenciaPage from './pages/RegistroIncidenciaPage'; // ¡YA NO SE IMPORTA COMO PÁGINA!
+import ListaIncidenciasPage from './pages/ListaIncidenciasPage';
 
 
 function App() {
@@ -228,9 +228,16 @@ function App() {
               }
             />
 
-            {/* registro de incidencias */}
-            <Route path="/incidencias/registrar" element={<RegistroIncidenciaPage />} />
-            <Route path="/incidencias" element={<ListaIncidenciasPage />} /> {/* ¡NUEVA RUTA AÑADIDA! */}
+            {/* Rutas de Incidencias (solo la lista, el registro se hace en BitacoraCampana) */}
+            {/* La ruta para /incidencias/registrar se elimina de aquí */}
+            <Route
+              path="/incidencias"
+              element={
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
+                  <ListaIncidenciasPage />
+                </PrivateRoute>
+              }
+            />
   
             {/* Ruta para el caso de página no encontrada */}
             <Route path="*" element={<div>404 - Página no encontrada</div>} />

@@ -54,7 +54,7 @@ function DashboardPage() {
     return (
       <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
         <Spinner animation="border" role="status">
-          <span className="visually-hidden">Cargando...</span>
+          <span className="visually-hidden">Cargando dashboard...</span>
         </Spinner>
         <p className="ms-3 text-muted">Cargando datos del dashboard...</p>
       </Container>
@@ -96,18 +96,21 @@ function DashboardPage() {
     <Container className="py-5">
       <h2 className="text-center mb-4 text-primary">Dashboard de {user.nombre} {user.apellido} ({user.role})</h2>
 
+      {/* ELIMINADA LA SECCIÓN DEL BOTÓN "Registrar Nueva Incidencia" */}
+      {/*
       <Row className="mb-4">
         <Col md={12} className="text-center">
           <Link
             to="/incidencias/registrar"
-            className="btn btn-lg btn-primary shadow-sm" // Estilo Bootstrap para un botón grande y azul
-            style={{ padding: '15px 30px', fontSize: '1.2rem' }} // Estilos inline para ajuste fino
+            className="btn btn-lg btn-primary shadow-sm"
+            style={{ padding: '15px 30px', fontSize: '1.2rem' }}
           >
-            <i className="bi bi-pencil-square me-2"></i> {/* Opcional: Ícono de Bootstrap Icons si los tienes configurados */}
+            <i className="bi bi-pencil-square me-2"></i>
             Registrar Nueva Incidencia
           </Link>
         </Col>
       </Row>
+      */}
 
       {user.role === 'ANALISTA' && (
         <Row>

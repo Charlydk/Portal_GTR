@@ -1,4 +1,4 @@
-// frontend/portal-gtr-frontend/src/pages/ListaIncidenciasPage.jsx
+// src/pages/ListaIncidenciasPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -7,16 +7,17 @@ import { Link } from 'react-router-dom';
 
 function ListaIncidenciasPage() {
   const { user, authToken, loading: authLoading } = useAuth();
-  const [incidencias, setIncidencias] = useState([]);
+  const [incidencias, setIncidencias] = useState([]); // Ahora son BitacoraEntry con es_incidencia=true
   const [loadingData, setLoadingData] = useState(true);
   const [error, setError] = useState(null);
-  const [filterAnalistaId, setFilterAnalistaId] = useState('');
+  const [filterCampanaId, setFilterCampanaId] = useState(''); // Filtro por campaña
   const [filterTipoIncidencia, setFilterTipoIncidencia] = useState('');
-  const [analistas, setAnalistas] = useState([]); // Para el selector de analistas
+  const [filterDate, setFilterDate] = useState(''); // Nuevo filtro por fecha
+  const [campanas, setCampanas] = useState([]); // Para el selector de campañas
 
   const isSupervisorOrResponsable = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
 
-  // Función para cargar las incidencias
+  // Función para cargar las incidencias (ahora entradas de bitácora filtradas)
   const fetchIncidencias = useCallback(async () => {
     if (!authToken || !user) {
       setLoadingData(false);
@@ -26,18 +27,17 @@ function ListaIncidenciasPage() {
     setLoadingData(true);
     setError(null);
 
-    let url = `${API_BASE_URL}/incidencias/`;
+    let url = `${API_BASE_URL}/incidencias/`; // Nuevo endpoint para incidencias filtradas
     const params = new URLSearchParams();
 
-    // Si es analista, solo puede ver sus propias incidencias (backend ya lo filtra)
-    // Si es supervisor/responsable, aplica los filtros
-    if (isSupervisorOrResponsable) {
-      if (filterAnalistaId) {
-        params.append('analista_id', filterAnalistaId);
-      }
-      if (filterTipoIncidencia) {
-        params.append('tipo_incidencia', filterTipoIncidencia);
-      }
+    if (filterCampanaId) {
+      params.append('campana_id', filterCampanaId);
+    }
+    if (filterTipoIncidencia) {
+      params.append('tipo_incidencia', filterTipoIncidencia);
+    }
+    if (filterDate) {
+      params.append('fecha', filterDate);
     }
 
     if (params.toString()) {
@@ -63,34 +63,37 @@ function ListaIncidenciasPage() {
     } finally {
       setLoadingData(false);
     }
-  }, [authToken, user, filterAnalistaId, filterTipoIncidencia, isSupervisorOrResponsable]);
+  }, [authToken, user, filterCampanaId, filterTipoIncidencia, filterDate]);
 
-  // Función para cargar la lista de analistas (solo para Supervisor/Responsable)
-  const fetchAnalistas = useCallback(async () => {
-    if (!authToken || !isSupervisorOrResponsable) return;
+  // Función para cargar la lista de campañas (para el filtro)
+  const fetchCampanas = useCallback(async () => {
+    if (!authToken) return; // No necesitamos user.role aquí, el backend ya filtra si es ANALISTA
     try {
-      const response = await fetch(`${API_BASE_URL}/analistas/`, {
+      const response = await fetch(`${API_BASE_URL}/campanas/`, {
         headers: { 'Authorization': `Bearer ${authToken}` },
       });
       if (!response.ok) {
-        throw new Error(`Error al cargar analistas: ${response.statusText}`);
+        throw new Error(`Error al cargar campañas: ${response.statusText}`);
       }
       const data = await response.json();
-      setAnalistas(data);
+      // Si el usuario es analista, solo mostrar sus campañas asignadas
+      if (user.role === 'ANALISTA') {
+        const assignedCampaignIds = user.campanas_asignadas ? user.campanas_asignadas.map(c => c.id) : [];
+        setCampanas(data.filter(campana => assignedCampaignIds.includes(campana.id)));
+      } else {
+        setCampanas(data);
+      }
     } catch (err) {
-      console.error("Error al cargar analistas:", err);
-      // No establecer error global para no bloquear la página si solo fallan los analistas
+      console.error("Error al cargar campañas:", err);
     }
-  }, [authToken, isSupervisorOrResponsable]);
+  }, [authToken, user]);
 
   useEffect(() => {
     if (!authLoading && user) {
       fetchIncidencias();
-      if (isSupervisorOrResponsable) {
-        fetchAnalistas();
-      }
+      fetchCampanas(); // Cargar campañas para el filtro
     }
-  }, [authLoading, user, fetchIncidencias, fetchAnalistas, isSupervisorOrResponsable]);
+  }, [authLoading, user, fetchIncidencias, fetchCampanas]);
 
   if (authLoading || loadingData) {
     return (
@@ -129,50 +132,58 @@ function ListaIncidenciasPage() {
     <Container className="py-5">
       <h2 className="text-center mb-4 text-primary">Lista de Incidencias</h2>
 
-      {isSupervisorOrResponsable && (
-        <Card className="mb-4 shadow-sm">
-          <Card.Header as="h5">Filtros de Incidencias</Card.Header>
-          <Card.Body>
-            <Row>
-              <Col md={6}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Filtrar por Analista:</Form.Label>
-                  <Form.Select
-                    value={filterAnalistaId}
-                    onChange={(e) => setFilterAnalistaId(e.target.value)}
-                  >
-                    <option value="">Todos los Analistas</option>
-                    {analistas.map(analista => (
-                      <option key={analista.id} value={analista.id}>
-                        {analista.nombre} {analista.apellido} ({analista.email})
-                      </option>
-                    ))}
-                  </Form.Select>
-                </Form.Group>
-              </Col>
-              <Col md={6}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Filtrar por Tipo de Incidencia:</Form.Label>
-                  <Form.Select
-                    value={filterTipoIncidencia}
-                    onChange={(e) => setFilterTipoIncidencia(e.target.value)}
-                  >
-                    <option value="">Todos los Tipos</option>
-                    <option value="tecnica">Técnica</option>
-                    <option value="operativa">Operativa</option>
-                    <option value="otra">Otra</option>
-                  </Form.Select>
-                </Form.Group>
-              </Col>
-            </Row>
-            <Button onClick={fetchIncidencias} variant="info">Aplicar Filtros</Button>
-          </Card.Body>
-        </Card>
-      )}
+      <Card className="mb-4 shadow-sm">
+        <Card.Header as="h5">Filtros de Incidencias</Card.Header>
+        <Card.Body>
+          <Row>
+            <Col md={4}>
+              <Form.Group className="mb-3">
+                <Form.Label>Filtrar por Campaña:</Form.Label>
+                <Form.Select
+                  value={filterCampanaId}
+                  onChange={(e) => setFilterCampanaId(e.target.value)}
+                >
+                  <option value="">Todas las Campañas</option>
+                  {campanas.map(campana => (
+                    <option key={campana.id} value={campana.id}>
+                      {campana.nombre}
+                    </option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+            </Col>
+            <Col md={4}>
+              <Form.Group className="mb-3">
+                <Form.Label>Filtrar por Tipo de Incidencia:</Form.Label>
+                <Form.Select
+                  value={filterTipoIncidencia}
+                  onChange={(e) => setFilterTipoIncidencia(e.target.value)}
+                >
+                  <option value="">Todos los Tipos</option>
+                  <option value="tecnica">Técnica</option>
+                  <option value="operativa">Operativa</option>
+                  <option value="otra">Otra</option>
+                </Form.Select>
+              </Form.Group>
+            </Col>
+            <Col md={4}>
+              <Form.Group className="mb-3">
+                <Form.Label>Filtrar por Fecha:</Form.Label>
+                <Form.Control
+                  type="date"
+                  value={filterDate}
+                  onChange={(e) => setFilterDate(e.target.value)}
+                />
+              </Form.Group>
+            </Col>
+          </Row>
+          <Button onClick={fetchIncidencias} variant="info">Aplicar Filtros</Button>
+        </Card.Body>
+      </Card>
 
       {incidencias.length === 0 ? (
         <Alert variant="info" className="text-center">
-          No se encontraron incidencias.
+          No se encontraron incidencias con los filtros aplicados.
         </Alert>
       ) : (
         <Card className="shadow-sm">
@@ -181,28 +192,26 @@ function ListaIncidenciasPage() {
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Analista</th>
-                  <th>Comentario</th>
-                  <th>Horario</th>
-                  <th>Tipo</th>
+                  <th>Campaña</th>
+                  <th>Fecha</th>
+                  <th>Hora</th>
+                  <th>Tipo Incidencia</th>
+                  <th>Comentario Incidencia</th>
+                  <th>Comentario General</th>
                   <th>Fecha Registro</th>
-                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {incidencias.map((incidencia) => (
                   <tr key={incidencia.id}>
                     <td>{incidencia.id}</td>
-                    <td>{incidencia.analista.nombre} {incidencia.analista.apellido}</td>
+                    <td>{incidencia.campana?.nombre || 'N/A'}</td> {/* Acceder a campana.nombre */}
+                    <td>{incidencia.fecha}</td>
+                    <td>{incidencia.hora}</td>
+                    <td><Badge bg="danger">{incidencia.tipo_incidencia || 'Incidencia'}</Badge></td>
+                    <td>{incidencia.comentario_incidencia || 'N/A'}</td>
                     <td>{incidencia.comentario || 'N/A'}</td>
-                    <td>{incidencia.horario}</td>
-                    <td>{incidencia.tipo_incidencia}</td>
-                    <td>{new Date(incidencia.fecha_registro).toLocaleDateString()}</td>
-                    <td>
-                      {/* Puedes añadir una ruta para ver el detalle de una incidencia específica si lo necesitas */}
-                      {/* <Link to={`/incidencias/${incidencia.id}`} className="btn btn-sm btn-info">Ver Detalle</Link> */}
-                      {/* Por ahora, no hay página de detalle de incidencia, así que no se enlaza */}
-                    </td>
+                    <td>{new Date(incidencia.fecha_creacion).toLocaleDateString()} {new Date(incidencia.fecha_creacion).toLocaleTimeString()}</td>
                   </tr>
                 ))}
               </tbody>

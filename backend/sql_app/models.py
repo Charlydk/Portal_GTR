@@ -1,5 +1,5 @@
 # backend/sql_app/models.py
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum, Table, Text, UniqueConstraint, Date # Importar Date
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum, Table, Text, UniqueConstraint, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -44,12 +44,14 @@ class Analista(Base):
     comentarios = relationship("ComentarioCampana", back_populates="analista")
     avisos_creados = relationship("Aviso", back_populates="creador")
     acuses_recibo_avisos = relationship("AcuseReciboAviso", back_populates="analista")
+    
+    # ¡ESTA RELACIÓN ES LA CLAVE! Asegúrate de que esté exactamente así.
     campanas_asignadas = relationship(
         "Campana",
         secondary=analistas_campanas,
         back_populates="analistas_asignados"
     )
-    incidencias_registradas = relationship("Incidencia", back_populates="analista")
+    # El campo de incidencias_registradas fue eliminado correctamente
 
 
 class Campana(Base):
@@ -65,6 +67,8 @@ class Campana(Base):
     tareas = relationship("Tarea", back_populates="campana")
     comentarios = relationship("ComentarioCampana", back_populates="campana")
     avisos = relationship("Aviso", back_populates="campana")
+    
+    # ¡ESTA RELACIÓN TAMBIÉN ES CLAVE! Asegúrate de que esté exactamente así.
     analistas_asignados = relationship(
         "Analista",
         secondary=analistas_campanas,
@@ -149,21 +153,27 @@ class AcuseReciboAviso(Base):
     analista = relationship("Analista", back_populates="acuses_recibo_avisos")
 
 
-# --- MODELOS DE BITÁCORA MODIFICADOS ---
+# --- MODELO DE BITÁCORA MODIFICADO PARA INCLUIR INCIDENCIAS ---
 class BitacoraEntry(Base):
     __tablename__ = "bitacora_entries"
     id = Column(Integer, primary_key=True, index=True)
     campana_id = Column(Integer, ForeignKey("campanas.id"))
-    fecha = Column(Date, nullable=False) # ¡NUEVA COLUMNA: fecha de la bitácora!
+    fecha = Column(Date, nullable=False) # Fecha de la bitácora
     hora = Column(String, nullable=False) # Formato "HH:MM"
-    comentario = Column(Text, nullable=True)
+    comentario = Column(Text, nullable=True) # Comentario general de la entrada
+
+    # ¡NUEVOS CAMPOS PARA INCIDENCIAS!
+    es_incidencia = Column(Boolean, default=False, nullable=False)
+    tipo_incidencia = Column(String, nullable=True) # Ej. "tecnica", "operativa", "otra"
+    comentario_incidencia = Column(Text, nullable=True) # Comentario específico de la incidencia
+
     fecha_creacion = Column(DateTime(timezone=True), server_default=func.now())
     fecha_ultima_actualizacion = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relación
     campana = relationship("Campana", back_populates="bitacora_entries")
 
-    # ¡RESTRICCIÓN ÚNICA MODIFICADA! Ahora es por campana, fecha y hora
+    # Restricción única por campana, fecha y hora
     __table_args__ = (UniqueConstraint('campana_id', 'fecha', 'hora', name='_campana_fecha_hora_uc'),)
 
 
@@ -178,16 +188,8 @@ class BitacoraGeneralComment(Base):
     # Relación
     campana = relationship("Campana", back_populates="bitacora_general_comment")
 
-# --- NUEVO MODELO DE INCIDENCIA ---
-class Incidencia(Base):
-    __tablename__ = "incidencias"
-
-    id = Column(Integer, primary_key=True, index=True)
-    comentario = Column(Text, nullable=True)
-    horario = Column(String, nullable=False) # Ej. "HH:MM"
-    tipo_incidencia = Column(String, nullable=False) # Ej. "tecnica", "operativa", "otra"
-    fecha_registro = Column(DateTime(timezone=True), server_default=func.now())
-    
-    analista_id = Column(Integer, ForeignKey("analistas.id"))
-    analista = relationship("Analista", back_populates="incidencias_registradas")
-
+# --- MODELO DE INCIDENCIA ELIMINADO ---
+# class Incidencia(Base):
+#     __tablename__ = "incidencias"
+#     # ... (contenido anterior del modelo Incidencia) ...
+#     # Este modelo ya no es necesario, su funcionalidad se integra en BitacoraEntry
