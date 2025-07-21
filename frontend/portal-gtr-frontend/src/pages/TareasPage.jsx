@@ -1,163 +1,231 @@
 // src/pages/TareasPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Container, Row, Col, Card, Spinner, Alert, ListGroup, Button, Badge } from 'react-bootstrap';
+import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // Importa useAuth
+import { useNavigate } from 'react-router-dom';
 
 function TareasPage() {
-  const [tareas, setTareas] = useState([]);
+  const { user, authToken, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
+
+  const [allTasks, setAllTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const { authToken, user } = useAuth(); // Obtiene authToken y user del contexto
+  const [successMessage, setSuccessMessage] = useState(null);
+  const [submittingTaskId, setSubmittingTaskId] = useState(null); // Para deshabilitar el botón mientras se actualiza
 
-  // Función para obtener las tareas
-  const fetchTareas = useCallback(async () => {
+  const fetchAllTasks = useCallback(async () => {
+    if (!authToken || !user) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/tareas/`, {
+      let campaignTasks = [];
+      let generatedTasks = [];
+
+      // Fetch Campaign Tasks (filtered by user role)
+      let campaignTasksUrl = `${API_BASE_URL}/tareas/`;
+      if (user.role === 'ANALISTA') {
+        campaignTasksUrl += `?analista_id=${user.id}`;
+      }
+      const campaignTasksResponse = await fetch(campaignTasksUrl, {
         headers: {
-          'Authorization': `Bearer ${authToken}`, // ¡IMPORTANTE! Envía el token de autenticación
+          'Authorization': `Bearer ${authToken}`,
         },
       });
-      if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("No autorizado. Por favor, inicie sesión.");
-        }
-        if (response.status === 403) {
-          throw new Error("Acceso denegado. No tiene los permisos necesarios para ver las tareas.");
-        }
-        throw new Error(`Error al cargar tareas: ${response.statusText}`);
+      if (!campaignTasksResponse.ok) {
+        const errorData = await campaignTasksResponse.json();
+        throw new Error(errorData.detail || `Error al cargar tareas de campaña: ${campaignTasksResponse.statusText}`);
       }
-      const data = await response.json();
-      setTareas(data);
+      campaignTasks = await campaignTasksResponse.json();
+      // Add a 'type' property to distinguish campaign tasks
+      campaignTasks = campaignTasks.map(task => ({ ...task, type: 'campaign' }));
+
+      // Fetch Generated Tasks (always filtered by current user for ANALISTA)
+      let generatedTasksUrl = `${API_BASE_URL}/tareas_generadas_por_avisos/`;
+      if (user.role === 'ANALISTA') {
+        generatedTasksUrl += `?analista_id=${user.id}`;
+      }
+      const generatedTasksResponse = await fetch(generatedTasksUrl, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
+      });
+      if (!generatedTasksResponse.ok) {
+        const errorData = await generatedTasksResponse.json();
+        throw new Error(errorData.detail || `Error al cargar tareas generadas por avisos: ${generatedTasksResponse.statusText}`);
+      }
+      generatedTasks = await generatedTasksResponse.json();
+      // Add a 'type' property to distinguish generated tasks
+      generatedTasks = generatedTasks.map(task => ({ ...task, type: 'generated' }));
+
+      // Combine and sort all tasks by creation date (newest first)
+      const combinedTasks = [...campaignTasks, ...generatedTasks].sort((a, b) => {
+        return new Date(b.fecha_creacion) - new Date(a.fecha_creacion);
+      });
+
+      setAllTasks(combinedTasks);
+
     } catch (err) {
-      console.error("Error al obtener tareas:", err);
-      setError(err.message || "No se pudo cargar la lista de tareas.");
+      console.error("Error fetching all tasks:", err);
+      setError(err.message || "No se pudieron cargar las tareas.");
     } finally {
       setLoading(false);
     }
-  }, [authToken]); // Vuelve a ejecutar cuando el token cambie
+  }, [authToken, user]);
 
-  // Efecto para cargar las tareas al montar el componente o cuando el token cambia
   useEffect(() => {
-    if (authToken) {
-      fetchTareas();
-    } else {
-      setLoading(false);
-      setError("Necesita iniciar sesión para ver las tareas.");
+    if (!authLoading && user) {
+      fetchAllTasks();
     }
-  }, [authToken, fetchTareas]);
+  }, [authLoading, user, fetchAllTasks]);
 
-  // Función para manejar la eliminación de una tarea
-  const handleEliminarTarea = async (tareaId) => {
-    if (!window.confirm('¿Está seguro de que desea eliminar esta tarea? Esta acción es irreversible.')) {
+  const handleMarcarCompletada = async (taskId, taskType) => {
+    if (!authToken || !user) {
+      setError("Necesita iniciar sesión para realizar esta acción.");
       return;
     }
+    setSubmittingTaskId(taskId); // Set the ID of the task being submitted
+    setError(null);
+    setSuccessMessage(null);
+
     try {
-      const response = await fetch(`${API_BASE_URL}/tareas/${tareaId}`, {
-        method: 'DELETE',
+      const url = taskType === 'generated' 
+        ? `${API_BASE_URL}/tareas_generadas_por_avisos/${taskId}`
+        : `${API_BASE_URL}/tareas/${taskId}`; // Fallback, though campaign tasks are managed differently
+
+      const payload = { progreso: 'COMPLETADA' };
+
+      const response = await fetch(url, {
+        method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${authToken}`, // ¡IMPORTANTE! Envía el token de autenticación
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
         },
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("No autorizado para eliminar tareas. Por favor, inicie sesión.");
-        }
-        if (response.status === 403) {
-          throw new Error("Acceso denegado. No tiene los permisos necesarios para eliminar tareas.");
-        }
-        throw new Error(`Error al eliminar tarea: ${response.statusText}`);
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Error al marcar como completada: ${response.statusText}`);
       }
 
-      alert('Tarea eliminada con éxito.');
-      fetchTareas(); // Recargar la lista de tareas
+      setSuccessMessage(`Tarea ${taskId} marcada como COMPLETADA con éxito!`);
+      fetchAllTasks(); // Recargar todas las tareas para reflejar el cambio
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err) {
-      console.error("Error al eliminar tarea:", err);
-      setError(err.message || "No se pudo eliminar la tarea.");
+      console.error("Error al marcar tarea como completada:", err);
+      setError(err.message || "No se pudo marcar la tarea como completada.");
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setSubmittingTaskId(null); // Clear the submitting task ID
     }
   };
 
-  if (loading) {
+  const formatDateTime = (isoString) => {
+    if (!isoString) return 'N/A';
+    const date = new Date(isoString);
+    return date.toLocaleString();
+  };
+
+  if (authLoading || loading) {
     return (
-      <div className="container mt-4 text-center">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Cargando tareas...</span>
-        </div>
-        <p>Cargando lista de tareas...</p>
-      </div>
+      <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
+        <Spinner animation="border" role="status">
+          <span className="visually-hidden">Cargando Tareas...</span>
+        </Spinner>
+        <p className="ms-3 text-muted">Cargando todas las tareas...</p>
+      </Container>
     );
   }
 
   if (error) {
     return (
-      <div className="container mt-4">
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-        {!authToken && (
-          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
-        )}
-      </div>
+      <Container className="mt-4">
+        <Alert variant="danger">
+          <Alert.Heading>Error al cargar las Tareas</Alert.Heading>
+          <p>{error}</p>
+          <Button onClick={() => navigate('/dashboard')}>Volver al Dashboard</Button>
+        </Alert>
+      </Container>
     );
   }
 
+  // Permisos: Solo Supervisores y Responsables pueden crear/editar tareas de campaña directamente
+  const canManageCampaignTasks = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
+
   return (
-    <div className="container mt-4">
-      <h2 className="mb-4">Lista de Tareas</h2>
-      {/* Solo permite crear tareas si el usuario actual es Supervisor o Responsable */}
-      {user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
-        <Link to="/tareas/crear" className="btn btn-primary mb-3">
-          Crear Nueva Tarea
-        </Link>
+    <Container className="py-5">
+      <h1 className="mb-4 text-center text-primary">Mis Tareas</h1>
+      {successMessage && <Alert variant="success">{successMessage}</Alert>}
+      {error && <Alert variant="danger">{error}</Alert>}
+
+      {canManageCampaignTasks && (
+        <div className="d-flex justify-content-end mb-3">
+          <Button variant="primary" onClick={() => navigate('/tareas/crear')}>
+            Crear Nueva Tarea de Campaña
+          </Button>
+        </div>
       )}
-      
-      <div className="table-responsive">
-        <table className="table table-striped table-hover">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Título</th>
-              <th>Analista</th>
-              <th>Campaña</th>
-              <th>Progreso</th>
-              <th>Fecha Vencimiento</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tareas.map((tarea) => (
-              <tr key={tarea.id}>
-                <td>{tarea.id}</td>
-                <td>{tarea.titulo}</td>
-                <td>{tarea.analista ? `${tarea.analista.nombre} ${tarea.analista.apellido}` : 'N/A'}</td>
-                <td>{tarea.campana ? tarea.campana.nombre : 'N/A'}</td>
-                <td>{tarea.progreso}</td>
-                <td>{tarea.fecha_vencimiento ? new Date(tarea.fecha_vencimiento).toLocaleDateString() : 'N/A'}</td>
-                <td>
-                  <Link to={`/tareas/${tarea.id}`} className="btn btn-info btn-sm me-2">Ver</Link>
-                  {/* Solo permite editar si el usuario actual es Supervisor o Responsable */}
-                  {user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
-                    <Link to={`/tareas/editar/${tarea.id}`} className="btn btn-warning btn-sm me-2">Editar</Link>
+
+      {allTasks.length > 0 ? (
+        <ListGroup variant="flush">
+          {allTasks.map(tarea => (
+            <ListGroup.Item key={`${tarea.type}-${tarea.id}`} className="d-flex justify-content-between align-items-center mb-2 shadow-sm rounded">
+              <div>
+                <h5>
+                  {tarea.titulo}
+                  <Badge bg={tarea.type === 'campaign' ? 'primary' : 'info'} className="ms-2">
+                    {tarea.type === 'campaign' ? 'Campaña' : 'Aviso'}
+                  </Badge>
+                </h5>
+                <p className="mb-1 text-muted">{tarea.descripcion}</p>
+                <small>
+                  Asignado a: {tarea.analista?.nombre || tarea.analista_asignado?.nombre} {tarea.analista?.apellido || tarea.analista_asignado?.apellido}
+                  {tarea.campana && ` | Campaña: ${tarea.campana.nombre}`}
+                </small>
+                <br/>
+                <small>
+                  Estado: <Badge bg={tarea.progreso === 'PENDIENTE' ? 'danger' : 'success'}>{tarea.progreso}</Badge>
+                  {tarea.fecha_vencimiento && (
+                    <span className="ms-2 text-danger">Vence: {formatDateTime(tarea.fecha_vencimiento)}</span>
                   )}
-                  {/* Solo permite eliminar si el usuario actual es Supervisor */}
-                  {user && user.role === 'SUPERVISOR' && (
-                    <button
-                      onClick={() => handleEliminarTarea(tarea.id)}
-                      className="btn btn-danger btn-sm"
-                    >
-                      Eliminar
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+                </small>
+              </div>
+              <div className="d-flex flex-column align-items-end">
+                <Button
+                  variant="outline-primary"
+                  size="sm"
+                  onClick={() => navigate(tarea.type === 'campaign' ? `/tareas/${tarea.id}` : `/tareas-generadas/${tarea.id}`)}
+                  className="mb-2"
+                >
+                  Ver Detalles
+                </Button>
+                {tarea.type === 'generated' && tarea.progreso === 'PENDIENTE' && (
+                  <Button
+                    variant="success"
+                    size="sm"
+                    onClick={() => handleMarcarCompletada(tarea.id, tarea.type)}
+                    disabled={submittingTaskId === tarea.id}
+                  >
+                    {submittingTaskId === tarea.id ? (
+                      <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
+                    ) : (
+                      'Marcar Completada'
+                    )}
+                  </Button>
+                )}
+              </div>
+            </ListGroup.Item>
+          ))}
+        </ListGroup>
+      ) : (
+        <Alert variant="info">No tienes tareas asignadas en este momento.</Alert>
+      )}
+    </Container>
   );
 }
 
