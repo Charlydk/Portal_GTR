@@ -154,8 +154,8 @@ function TareasPage() {
     );
   }
 
-  // Permisos: Solo Supervisores y Responsables pueden crear/editar tareas de campaña directamente
-  const canManageCampaignTasks = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
+  // Ahora, cualquier rol que pueda crear tareas (Analista, Supervisor, Responsable)
+  const canCreateTask = user && (user.role === 'ANALISTA' || user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
 
   return (
     <Container className="py-5">
@@ -163,64 +163,83 @@ function TareasPage() {
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
       {error && <Alert variant="danger">{error}</Alert>}
 
-      {canManageCampaignTasks && (
+      {canCreateTask && ( // Mostrar el botón si el usuario puede crear tareas
         <div className="d-flex justify-content-end mb-3">
           <Button variant="primary" onClick={() => navigate('/tareas/crear')}>
-            Crear Nueva Tarea de Campaña
+            Crear Nueva Tarea
           </Button>
         </div>
       )}
 
       {allTasks.length > 0 ? (
         <ListGroup variant="flush">
-          {allTasks.map(tarea => (
-            <ListGroup.Item key={`${tarea.type}-${tarea.id}`} className="d-flex justify-content-between align-items-center mb-2 shadow-sm rounded">
-              <div>
-                <h5>
-                  {tarea.titulo}
-                  <Badge bg={tarea.type === 'campaign' ? 'primary' : 'info'} className="ms-2">
-                    {tarea.type === 'campaign' ? 'Campaña' : 'Aviso'}
-                  </Badge>
-                </h5>
-                <p className="mb-1 text-muted">{tarea.descripcion}</p>
-                <small>
-                  Asignado a: {tarea.analista?.nombre || tarea.analista_asignado?.nombre} {tarea.analista?.apellido || tarea.analista_asignado?.apellido}
-                  {tarea.campana && ` | Campaña: ${tarea.campana.nombre}`}
-                </small>
-                <br/>
-                <small>
-                  Estado: <Badge bg={tarea.progreso === 'PENDIENTE' ? 'danger' : 'success'}>{tarea.progreso}</Badge>
-                  {tarea.fecha_vencimiento && (
-                    <span className="ms-2 text-danger">Vence: {formatDateTime(tarea.fecha_vencimiento)}</span>
-                  )}
-                </small>
-              </div>
-              <div className="d-flex flex-column align-items-end">
-                <Button
-                  variant="outline-primary"
-                  size="sm"
-                  onClick={() => navigate(tarea.type === 'campaign' ? `/tareas/${tarea.id}` : `/tareas-generadas/${tarea.id}`)}
-                  className="mb-2"
-                >
-                  Ver Detalles
-                </Button>
-                {tarea.type === 'generated' && tarea.progreso === 'PENDIENTE' && (
-                  <Button
-                    variant="success"
-                    size="sm"
-                    onClick={() => handleMarcarCompletada(tarea.id, tarea.type)}
-                    disabled={submittingTaskId === tarea.id}
-                  >
-                    {submittingTaskId === tarea.id ? (
-                      <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
-                    ) : (
-                      'Marcar Completada'
+          {allTasks.map(tarea => {
+            // Determinar si el usuario actual puede editar esta tarea específica
+            const canEditThisTask = user && (
+              user.role === 'SUPERVISOR' ||
+              user.role === 'RESPONSABLE' ||
+              (user.role === 'ANALISTA' && (tarea.analista_id === user.id || tarea.analista_asignado?.id === user.id))
+            );
+
+            return (
+              <ListGroup.Item key={`${tarea.type}-${tarea.id}`} className="d-flex justify-content-between align-items-center mb-2 shadow-sm rounded">
+                <div>
+                  <h5>
+                    {tarea.titulo}
+                    <Badge bg={tarea.type === 'campaign' ? 'primary' : 'info'} className="ms-2">
+                      {tarea.type === 'campaign' ? 'Campaña' : 'Aviso'}
+                    </Badge>
+                  </h5>
+                  <p className="mb-1 text-muted">{tarea.descripcion}</p>
+                  <small>
+                    Asignado a: {tarea.analista?.nombre || tarea.analista_asignado?.nombre} {tarea.analista?.apellido || tarea.analista_asignado?.apellido}
+                    {tarea.campana && ` | Campaña: ${tarea.campana.nombre}`}
+                  </small>
+                  <br/>
+                  <small>
+                    Estado: <Badge bg={tarea.progreso === 'PENDIENTE' ? 'danger' : 'success'}>{tarea.progreso}</Badge>
+                    {tarea.fecha_vencimiento && (
+                      <span className="ms-2 text-danger">Vence: {formatDateTime(tarea.fecha_vencimiento)}</span>
                     )}
+                  </small>
+                </div>
+                <div className="d-flex flex-column align-items-end">
+                  <Button
+                    variant="outline-primary"
+                    size="sm"
+                    onClick={() => navigate(tarea.type === 'campaign' ? `/tareas/${tarea.id}` : `/tareas-generadas/${tarea.id}`)}
+                    className="mb-2"
+                  >
+                    Ver Detalles
                   </Button>
-                )}
-              </div>
-            </ListGroup.Item>
-          ))}
+                  {canEditThisTask && ( // Mostrar el botón de editar si tiene permisos
+                    <Button
+                      variant="outline-secondary"
+                      size="sm"
+                      onClick={() => navigate(tarea.type === 'campaign' ? `/tareas/editar/${tarea.id}` : `/tareas-generadas/editar/${tarea.id}`)}
+                      className="mb-2"
+                    >
+                      Editar
+                    </Button>
+                  )}
+                  {tarea.type === 'generated' && tarea.progreso === 'PENDIENTE' && (
+                    <Button
+                      variant="success"
+                      size="sm"
+                      onClick={() => handleMarcarCompletada(tarea.id, tarea.type)}
+                      disabled={submittingTaskId === tarea.id}
+                    >
+                      {submittingTaskId === tarea.id ? (
+                        <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
+                      ) : (
+                        'Marcar Completada'
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </ListGroup.Item>
+            );
+          })}
         </ListGroup>
       ) : (
         <Alert variant="info">No tienes tareas asignadas en este momento.</Alert>

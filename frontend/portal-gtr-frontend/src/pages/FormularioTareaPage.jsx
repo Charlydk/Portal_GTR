@@ -1,12 +1,16 @@
 // src/pages/FormularioTareaPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Container, Form, Button, Alert, Spinner, Card } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // Importa useAuth
+import { useAuth } from '../context/AuthContext';
 
 function FormularioTareaPage() {
-  const { id } = useParams(); // Para saber si estamos editando
+  const { id } = useParams(); // Para editar una tarea existente
   const navigate = useNavigate();
+  const { user, authToken, loading: authLoading } = useAuth();
+  const isEditing = !!id;
+
   const [formData, setFormData] = useState({
     titulo: '',
     descripcion: '',
@@ -15,257 +19,283 @@ function FormularioTareaPage() {
     analista_id: '',
     campana_id: ''
   });
-  const [analistas, setAnalistas] = useState([]);
-  const [campanas, setCampanas] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const { authToken } = useAuth(); // Obtiene authToken del contexto
 
-  const fetchDependencies = useCallback(async () => {
-    setLoading(true);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [analistas, setAnalistas] = useState([]); // Para supervisores/responsables
+  const [campanas, setCampanas] = useState([]); // Para todos los roles que puedan asignar a campañas
+
+  const fetchInitialData = useCallback(async () => {
+    if (!authToken || !user) {
+      setLoading(false);
+      return;
+    }
     setError(null);
     try {
-      // Obtener analistas
-      const analistasResponse = await fetch(`${API_BASE_URL}/analistas/`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
-      if (!analistasResponse.ok) throw new Error(`Error al cargar analistas: ${analistasResponse.statusText}`);
-      const analistasData = await analistasResponse.json();
-      setAnalistas(analistasData);
+      // Fetch all analysts if current user is SUPERVISOR or RESPONSABLE
+      if (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') {
+        const analistasResponse = await fetch(`${API_BASE_URL}/analistas/`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!analistasResponse.ok) throw new Error('Error al cargar analistas.');
+        setAnalistas(await analistasResponse.json());
+      } else if (user.role === 'ANALISTA') {
+        // For ANALISTA, pre-fill their own ID and they can only assign to themselves
+        setFormData(prev => ({ ...prev, analista_id: user.id }));
+      }
 
-      // Obtener campañas
-      const campanasResponse = await fetch(`${API_BASE_URL}/campanas/`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
-      if (!campanasResponse.ok) throw new Error(`Error al cargar campañas: ${campanasResponse.statusText}`);
-      const campanasData = await campanasResponse.json();
-      setCampanas(campanasData);
+      // Fetch all campaigns if current user is SUPERVISOR or RESPONSABLE
+      // Or fetch only assigned campaigns if current user is ANALISTA
+      let campanasUrl = `${API_BASE_URL}/campanas/`;
+      if (user.role === 'ANALISTA') {
+        // Fetch campaigns assigned to the current analyst
+        const analistaMeResponse = await fetch(`${API_BASE_URL}/users/me/`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!analistaMeResponse.ok) throw new Error('Error al cargar campañas asignadas del analista.');
+        const analistaMeData = await analistaMeResponse.json();
+        setCampanas(analistaMeData.campanas_asignadas || []);
+      } else {
+        // Supervisors/Responsables can see all campaigns
+        const campanasResponse = await fetch(campanasUrl, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!campanasResponse.ok) throw new Error('Error al cargar campañas.');
+        setCampanas(await campanasResponse.json());
+      }
 
-      // Si estamos editando, cargar datos de la tarea
-      if (id) {
+      // If editing, fetch task data
+      if (isEditing) {
         const tareaResponse = await fetch(`${API_BASE_URL}/tareas/${id}`, {
           headers: { 'Authorization': `Bearer ${authToken}` }
         });
-        if (!tareaResponse.ok) throw new Error(`Error al cargar la tarea: ${tareaResponse.statusText}`);
+        if (!tareaResponse.ok) throw new Error('Error al cargar la tarea.');
         const tareaData = await tareaResponse.json();
         setFormData({
           titulo: tareaData.titulo,
           descripcion: tareaData.descripcion || '',
           fecha_vencimiento: tareaData.fecha_vencimiento ? new Date(tareaData.fecha_vencimiento).toISOString().slice(0, 16) : '',
           progreso: tareaData.progreso,
-          analista_id: tareaData.analista_id.toString(), // Asegura que sea string para el select
-          campana_id: tareaData.campana_id.toString() // Asegura que sea string para el select
+          analista_id: tareaData.analista_id,
+          campana_id: tareaData.campana_id || ''
         });
       }
     } catch (err) {
-      console.error("Error al cargar dependencias de tarea:", err);
-      setError(err.message || "No se pudieron cargar los datos necesarios.");
+      console.error("Error fetching initial data:", err);
+      setError(err.message || "No se pudo cargar la información inicial.");
     } finally {
       setLoading(false);
     }
-  }, [id, authToken]);
+  }, [authToken, user, id, isEditing]);
 
   useEffect(() => {
-    if (authToken) {
-      fetchDependencies();
-    } else {
-      setLoading(false);
-      setError("Necesita iniciar sesión para gestionar tareas.");
+    if (!authLoading && user) {
+      fetchInitialData();
     }
-  }, [authToken, fetchDependencies]);
+  }, [authLoading, user, fetchInitialData]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsSubmitting(true);
+    setSubmitting(true);
     setError(null);
+    setSuccess(null);
 
     try {
-      const method = id ? 'PUT' : 'POST';
-      const url = id ? `${API_BASE_URL}/tareas/${id}` : `${API_BASE_URL}/tareas/`;
-
-      const dataToSend = {
+      const payload = {
         ...formData,
-        analista_id: parseInt(formData.analista_id),
-        campana_id: parseInt(formData.campana_id),
-        fecha_vencimiento: formData.fecha_vencimiento ? new Date(formData.fecha_vencimiento).toISOString() : null,
+        analista_id: user.role === 'ANALISTA' ? user.id : parseInt(formData.analista_id),
+        campana_id: formData.campana_id ? parseInt(formData.campana_id) : null, // Convertir a int o null
+        fecha_vencimiento: new Date(formData.fecha_vencimiento).toISOString(),
+        progreso: formData.progreso,
       };
 
+      const url = isEditing ? `${API_BASE_URL}/tareas/${id}` : `${API_BASE_URL}/tareas/`;
+      const method = isEditing ? 'PUT' : 'POST';
+
       const response = await fetch(url, {
-        method: method,
+        method,
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`, // Envía el token
+          'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify(dataToSend),
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        if (response.status === 422 && errorData.detail) {
-          const validationErrors = errorData.detail.map(err => {
-            const field = err.loc[err.loc.length - 1];
-            return `${field}: ${err.msg}`;
-          }).join('\n');
-          throw new Error(`Errores de validación:\n${validationErrors}`);
-        }
-        throw new Error(errorData.detail || `Error al ${id ? 'actualizar' : 'crear'} tarea: ${response.statusText}`);
+        throw new Error(errorData.detail || `Error al ${isEditing ? 'actualizar' : 'crear'} la tarea.`);
       }
 
-      alert(`Tarea ${id ? 'actualizada' : 'creada'} con éxito.`);
-      navigate('/tareas'); // Redirige a la lista de tareas
+      setSuccess(`Tarea ${isEditing ? 'actualizada' : 'creada'} con éxito!`);
+      setTimeout(() => {
+        setSuccess(null);
+        navigate('/tareas'); // Redirigir a la lista de tareas
+      }, 2000);
     } catch (err) {
-      console.error(`Error al ${id ? 'actualizar' : 'crear'} tarea:`, err);
-      setError(err.message || `No se pudo ${id ? 'actualizar' : 'crear'} la tarea.`);
+      console.error("Error submitting form:", err);
+      setError(err.message || `No se pudo ${isEditing ? 'actualizar' : 'crear'} la tarea.`);
+      setTimeout(() => setError(null), 5000);
     } finally {
-      setIsSubmitting(false);
+      setSubmitting(false);
     }
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
-      <div className="container mt-4 text-center">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Cargando formulario...</span>
-        </div>
-        <p>Cargando información de la tarea...</p>
-      </div>
+      <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
+        <Spinner animation="border" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </Spinner>
+        <p className="ms-3 text-muted">Cargando formulario de tarea...</p>
+      </Container>
     );
   }
 
-  if (error) {
+  // Restricción de acceso para ANALISTA si intenta editar una tarea que no es suya
+  // O si intenta acceder a la creación/edición sin los permisos adecuados.
+  // La lógica de backend ya maneja esto, pero esto es una capa extra en el frontend.
+  const canAccessForm = user && (
+    user.role === 'SUPERVISOR' || 
+    user.role === 'RESPONSABLE' ||
+    (user.role === 'ANALISTA' && (!isEditing || (isEditing && formData.analista_id === user.id)))
+  );
+
+  if (!canAccessForm) {
     return (
-      <div className="container mt-4">
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-        {!authToken && (
-          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
-        )}
-        <button onClick={() => navigate('/tareas')} className="btn btn-secondary mt-3">Volver a Tareas</button>
-      </div>
+      <Container className="mt-4">
+        <Alert variant="danger">
+          <Alert.Heading>Acceso Denegado</Alert.Heading>
+          <p>No tienes los permisos necesarios para acceder a este formulario de tarea.</p>
+          <Button onClick={() => navigate('/dashboard')}>Ir al Dashboard</Button>
+        </Alert>
+      </Container>
     );
   }
 
   return (
-    <div className="container mt-4">
-      <h2 className="mb-4">{id ? 'Editar Tarea' : 'Crear Nueva Tarea'}</h2>
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      )}
-      <form onSubmit={handleSubmit}>
-        <div className="mb-3">
-          <label htmlFor="tituloInput" className="form-label">Título:</label>
-          <input
-            type="text"
-            className="form-control rounded-md"
-            id="tituloInput"
-            name="titulo"
-            value={formData.titulo}
-            onChange={handleChange}
-            required
-            disabled={isSubmitting}
-          />
-        </div>
-        <div className="mb-3">
-          <label htmlFor="descripcionInput" className="form-label">Descripción:</label>
-          <textarea
-            className="form-control rounded-md"
-            id="descripcionInput"
-            name="descripcion"
-            value={formData.descripcion}
-            onChange={handleChange}
-            rows="3"
-            disabled={isSubmitting}
-          ></textarea>
-        </div>
-        <div className="mb-3">
-          <label htmlFor="fechaVencimientoInput" className="form-label">Fecha de Vencimiento (Opcional):</label>
-          <input
-            type="datetime-local"
-            className="form-control rounded-md"
-            id="fechaVencimientoInput"
-            name="fecha_vencimiento"
-            value={formData.fecha_vencimiento}
-            onChange={handleChange}
-            disabled={isSubmitting}
-          />
-        </div>
-        <div className="mb-3">
-          <label htmlFor="progresoSelect" className="form-label">Progreso:</label>
-          <select
-            className="form-select rounded-md"
-            id="progresoSelect"
-            name="progreso"
-            value={formData.progreso}
-            onChange={handleChange}
-            required
-            disabled={isSubmitting}
-          >
-            <option value="PENDIENTE">PENDIENTE</option>
-            <option value="EN_PROGRESO">EN_PROGRESO</option>
-            <option value="COMPLETADA">COMPLETADA</option>
-            <option value="BLOQUEADA">BLOQUEADA</option>
-          </select>
-        </div>
-        <div className="mb-3">
-          <label htmlFor="analistaSelect" className="form-label">Analista Asignado:</label>
-          <select
-            className="form-select rounded-md"
-            id="analistaSelect"
-            name="analista_id"
-            value={formData.analista_id}
-            onChange={handleChange}
-            required
-            disabled={isSubmitting}
-          >
-            <option value="">Seleccione un analista</option>
-            {analistas.map(analista => (
-              <option key={analista.id} value={analista.id}>
-                {analista.nombre} {analista.apellido} (BMS ID: {analista.bms_id})
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="mb-3">
-          <label htmlFor="campanaSelect" className="form-label">Campaña Asociada:</label>
-          <select
-            className="form-select rounded-md"
-            id="campanaSelect"
-            name="campana_id"
-            value={formData.campana_id}
-            onChange={handleChange}
-            required
-            disabled={isSubmitting}
-          >
-            <option value="">Seleccione una campaña</option>
-            {campanas.map(campana => (
-              <option key={campana.id} value={campana.id}>
-                {campana.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="d-grid gap-2">
-          <button type="submit" className="btn btn-primary rounded-md" disabled={isSubmitting}>
-            {isSubmitting ? 'Guardando...' : (id ? 'Actualizar Tarea' : 'Crear Tarea')}
-          </button>
-          <button type="button" onClick={() => navigate('/tareas')} className="btn btn-secondary rounded-md">
-            Cancelar
-          </button>
-        </div>
-      </form>
-    </div>
+    <Container className="py-5">
+      <Card className="shadow-lg p-4">
+        <h2 className="text-center mb-4 text-primary">{isEditing ? 'Editar Tarea' : 'Crear Nueva Tarea'}</h2>
+
+        {success && <Alert variant="success">{success}</Alert>}
+        {error && <Alert variant="danger">{error}</Alert>}
+
+        <Form onSubmit={handleSubmit}>
+          <Form.Group className="mb-3" controlId="titulo">
+            <Form.Label>Título</Form.Label>
+            <Form.Control
+              type="text"
+              name="titulo"
+              value={formData.titulo}
+              onChange={handleChange}
+              required
+            />
+          </Form.Group>
+
+          <Form.Group className="mb-3" controlId="descripcion">
+            <Form.Label>Descripción</Form.Label>
+            <Form.Control
+              as="textarea"
+              rows={3}
+              name="descripcion"
+              value={formData.descripcion}
+              onChange={handleChange}
+            />
+          </Form.Group>
+
+          <Form.Group className="mb-3" controlId="fecha_vencimiento">
+            <Form.Label>Fecha de Vencimiento</Form.Label>
+            <Form.Control
+              type="datetime-local"
+              name="fecha_vencimiento"
+              value={formData.fecha_vencimiento}
+              onChange={handleChange}
+              required
+            />
+          </Form.Group>
+
+          <Form.Group className="mb-3" controlId="progreso">
+            <Form.Label>Progreso</Form.Label>
+            <Form.Select
+              name="progreso"
+              value={formData.progreso}
+              onChange={handleChange}
+              required
+              disabled={user.role === 'ANALISTA' && !isEditing} // Analistas solo pueden cambiar progreso al editar
+            >
+              <option value="PENDIENTE">PENDIENTE</option>
+              <option value="EN_PROGRESO">EN_PROGRESO</option>
+              <option value="COMPLETADA">COMPLETADA</option>
+              <option value="CANCELADA">CANCELADA</option>
+            </Form.Select>
+          </Form.Group>
+
+          <Form.Group className="mb-3" controlId="analista_id">
+            <Form.Label>Analista Asignado</Form.Label>
+            <Form.Select
+              name="analista_id"
+              value={formData.analista_id}
+              onChange={handleChange}
+              required
+              disabled={user.role === 'ANALISTA'} // Analista solo puede asignarse a sí mismo
+            >
+              <option value="">Seleccionar Analista</option>
+              {user.role === 'ANALISTA' ? (
+                // Si es analista, solo muestra su propio nombre
+                <option key={user.id} value={user.id}>{user.nombre} {user.apellido}</option>
+              ) : (
+                // Si es supervisor/responsable, muestra todos los analistas
+                analistas.map(analista => (
+                  <option key={analista.id} value={analista.id}>
+                    {analista.nombre} {analista.apellido} ({analista.role})
+                  </option>
+                ))
+              )}
+            </Form.Select>
+          </Form.Group>
+
+          <Form.Group className="mb-3" controlId="campana_id">
+            <Form.Label>Campaña (Opcional)</Form.Label>
+            <Form.Select
+              name="campana_id"
+              value={formData.campana_id}
+              onChange={handleChange}
+            >
+              <option value="">Ninguna Campaña (Tarea Personal)</option>
+              {campanas.map(campana => (
+                <option key={campana.id} value={campana.id}>
+                  {campana.nombre}
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+
+          <div className="d-grid gap-2 mt-4">
+            <Button variant="primary" type="submit" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
+                  {' '}
+                  Guardando...
+                </>
+              ) : (
+                isEditing ? 'Actualizar Tarea' : 'Crear Tarea'
+              )}
+            </Button>
+            <Button variant="secondary" onClick={() => navigate('/tareas')} disabled={submitting}>
+              Cancelar
+            </Button>
+          </div>
+        </Form>
+      </Card>
+    </Container>
   );
 }
 
