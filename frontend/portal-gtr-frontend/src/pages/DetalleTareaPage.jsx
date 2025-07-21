@@ -337,6 +337,16 @@ function DetalleTareaPage() {
                     disabled={submittingChecklist === item.id || !canEditChecklistItem(item)}
                   />
                   {submittingChecklist === item.id && <Spinner animation="border" size="sm" className="ms-2" />}
+                  {canEditChecklistItem(item) && ( // Mostrar el botón de editar si tiene permisos
+                    <Button
+                      variant="outline-secondary"
+                      size="sm"
+                      onClick={() => navigate(`/tareas/${tarea.id}/checklist_items/editar/${item.id}`)}
+                      className="ms-3" // Añadir un poco de margen
+                    >
+                      Editar
+                    </Button>
+                  )}
                 </ListGroup.Item>
               ))}
             </ListGroup>

@@ -1,215 +1,239 @@
 // src/pages/FormularioChecklistItemPage.jsx
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { API_BASE_URL } from '../api'; // Tu URL base de la API
-import { useAuth } from '../context/AuthContext'; // ¡IMPORTANTE! Importamos useAuth
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Container, Form, Button, Alert, Spinner, Card } from 'react-bootstrap';
+import { API_BASE_URL } from '../api';
+import { useAuth } from '../context/AuthContext';
 
 function FormularioChecklistItemPage() {
-  // El 'id' puede ser el ID del checklist item (para editar) o 'crear' (para nuevo)
-  const { id, tareaId } = useParams(); // También necesitamos el ID de la tarea
-  const navigate = useNavigate(); // Para redirigir después de guardar
+  const { id, tareaId } = useParams(); // 'id' para editar, 'tareaId' para crear desde una tarea
+  const navigate = useNavigate();
+  const { user, authToken, loading: authLoading } = useAuth();
+  const isEditing = !!id; // Si hay 'id' en los params, estamos editando
 
-  const [loading, setLoading] = useState(true); // Estado de carga para la edición
-  const [error, setError] = useState(null); // Estado para errores de carga o envío
-  const [isSubmitting, setIsSubmitting] = useState(false); // Estado para el envío del formulario
-  const [tarea, setTarea] = useState(null); // Para mostrar el título de la tarea asociada
-  const { authToken } = useAuth(); // ¡IMPORTANTE! Obtiene authToken del contexto
-
-  // Estado para los datos del formulario
   const [formData, setFormData] = useState({
     descripcion: '',
     completado: false,
-    tarea_id: parseInt(tareaId) || null // Aseguramos que tarea_id sea un número, o null si no está presente
+    tarea_id: tareaId || '' // Pre-rellenar si viene de la URL
   });
 
-  // Efecto para cargar datos del checklist item si estamos editando
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [tareas, setTareas] = useState([]); // Para la lista de tareas a seleccionar
+
+  const fetchInitialData = useCallback(async () => {
+    if (!authToken || !user) {
+      setLoading(false);
+      return;
+    }
+    setError(null);
+    try {
+      // Fetch tasks based on user role
+      let tasksUrl = `${API_BASE_URL}/tareas/`;
+      if (user.role === 'ANALISTA') {
+        tasksUrl += `?analista_id=${user.id}`; // Analistas solo ven sus propias tareas
+      }
+      const tasksResponse = await fetch(tasksUrl, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!tasksResponse.ok) throw new Error('Error al cargar tareas.');
+      setTareas(await tasksResponse.json());
+
+      // If editing, fetch checklist item data
+      if (isEditing) {
+        const itemResponse = await fetch(`${API_BASE_URL}/checklist_items/${id}`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!itemResponse.ok) throw new Error('Error al cargar el checklist item.');
+        const itemData = await itemResponse.json();
+        setFormData({
+          descripcion: itemData.descripcion,
+          completado: itemData.completado,
+          tarea_id: itemData.tarea_id // Asegurarse de cargar la tarea_id
+        });
+      } else if (tareaId) {
+        // If creating from a specific task, ensure that task is valid for the user
+        const specificTaskResponse = await fetch(`${API_BASE_URL}/tareas/${tareaId}`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!specificTaskResponse.ok) {
+          throw new Error('La tarea especificada no existe o no tienes permiso para crear items en ella.');
+        }
+        // No necesitamos la data, solo confirmamos que existe y es accesible
+        setFormData(prev => ({ ...prev, tarea_id: tareaId }));
+      }
+    } catch (err) {
+      console.error("Error fetching initial data:", err);
+      setError(err.message || "No se pudo cargar la información inicial.");
+    } finally {
+      setLoading(false);
+    }
+  }, [authToken, user, id, isEditing, tareaId]);
+
   useEffect(() => {
-    const fetchItemAndTask = async () => {
-      if (!authToken) { // Si no hay token, no podemos cargar nada
-        setLoading(false);
-        setError("Necesita iniciar sesión para gestionar ítems de checklist.");
-        return;
-      }
+    if (!authLoading && user) {
+      fetchInitialData();
+    }
+  }, [authLoading, user, fetchInitialData]);
 
-      setLoading(true);
-      setError(null);
-      try {
-        // Primero, cargar la tarea asociada (si tareaId está presente)
-        if (tareaId) {
-          const parsedTareaId = parseInt(tareaId);
-          if (isNaN(parsedTareaId)) {
-            throw new Error("ID de tarea inválido.");
-          }
-          const taskResponse = await fetch(`${API_BASE_URL}/tareas/${parsedTareaId}`, {
-            headers: { 'Authorization': `Bearer ${authToken}` } // ¡IMPORTANTE!
-          });
-          if (!taskResponse.ok) {
-            throw new Error(`Error al cargar la tarea asociada: ${taskResponse.statusText}`);
-          }
-          const taskData = await taskResponse.json();
-          setTarea(taskData);
-          setFormData(prev => ({ ...prev, tarea_id: parsedTareaId }));
-        } else {
-          throw new Error("ID de tarea no especificado para el ítem de checklist.");
-        }
-
-        // Si estamos en modo edición (id es un número y no 'crear')
-        if (id && id !== 'crear') {
-          const itemId = parseInt(id);
-          if (isNaN(itemId)) {
-            throw new Error("ID de ítem de checklist inválido para edición.");
-          }
-          const itemResponse = await fetch(`${API_BASE_URL}/checklist_items/${itemId}`, {
-            headers: { 'Authorization': `Bearer ${authToken}` } // ¡IMPORTANTE!
-          });
-          if (!itemResponse.ok) {
-            if (itemResponse.status === 404) {
-              throw new Error("Ítem de checklist no encontrado para edición.");
-            }
-            throw new Error(`Error al cargar el ítem de checklist: ${itemResponse.statusText}`);
-          }
-          const itemData = await itemResponse.json();
-          setFormData({
-            descripcion: itemData.descripcion,
-            completado: itemData.completado,
-            tarea_id: itemData.tarea_id // Aseguramos que el tarea_id del form sea el del item cargado
-          });
-        }
-      } catch (err) {
-        console.error("Error en FormularioChecklistItemPage:", err);
-        setError(err.message || "No se pudo cargar el formulario.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchItemAndTask();
-  }, [id, tareaId, authToken]); // Dependencias: id, tareaId y authToken
-
-  // Manejador de cambios en los campos del formulario
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setFormData(prevState => ({
-      ...prevState,
+    setFormData(prev => ({
+      ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
   };
 
-  // Manejador de envío del formulario
   const handleSubmit = async (e) => {
-    e.preventDefault(); // Previene el comportamiento por defecto del formulario
-    setIsSubmitting(true); // Indicamos que el envío ha comenzado
-    setError(null);       // Limpiamos errores previos
-
-    const method = (id && id !== 'crear') ? 'PUT' : 'POST';
-    const url = (id && id !== 'crear') ? `${API_BASE_URL}/checklist_items/${id}` : `${API_BASE_URL}/checklist_items/`;
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    setSuccess(null);
 
     try {
+      const payload = {
+        ...formData,
+        tarea_id: parseInt(formData.tarea_id), // Asegurarse de que sea un número
+      };
+
+      const url = isEditing ? `${API_BASE_URL}/checklist_items/${id}` : `${API_BASE_URL}/checklist_items/`;
+      const method = isEditing ? 'PUT' : 'POST';
+
       const response = await fetch(url, {
-        method: method,
+        method,
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`, // ¡IMPORTANTE! Envía el token de autenticación
+          'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify(formData), // Envía los datos del formulario en formato JSON
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || `Error al guardar el ítem de checklist: ${response.statusText}`);
+        throw new Error(errorData.detail || `Error al ${isEditing ? 'actualizar' : 'crear'} el checklist item.`);
       }
 
-      const result = await response.json();
-      alert(`Ítem de checklist ${method === 'PUT' ? 'actualizado' : 'creado'} con éxito.`);
-      // Redirigir de vuelta a la página de detalle de la tarea
-      navigate(`/tareas/${formData.tarea_id}`); 
+      setSuccess(`Checklist Item ${isEditing ? 'actualizado' : 'creado'} con éxito!`);
+      setTimeout(() => {
+        setSuccess(null);
+        // Redirigir a la página de detalles de la tarea
+        navigate(`/tareas/${formData.tarea_id}`); 
+      }, 2000);
     } catch (err) {
-      console.error("Error al guardar el ítem de checklist:", err);
-      setError(err.message || "No se pudo guardar el ítem de checklist. Intente de nuevo.");
+      console.error("Error submitting form:", err);
+      setError(err.message || `No se pudo ${isEditing ? 'actualizar' : 'crear'} el checklist item.`);
+      setTimeout(() => setError(null), 5000);
     } finally {
-      setIsSubmitting(false); // Indicamos que el envío ha finalizado
+      setSubmitting(false);
     }
   };
 
-  // Determinar si estamos en modo edición
-  const isEditMode = !!id && id !== 'crear';
-
-  // Renderizado condicional para el estado de carga
-  if (loading) {
+  if (authLoading || loading) {
     return (
-      <div className="container mt-4 text-center">
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Cargando formulario...</span>
-        </div>
-        <p>Cargando datos del ítem de checklist...</p>
-      </div>
+      <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
+        <Spinner animation="border" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </Spinner>
+        <p className="ms-3 text-muted">Cargando formulario de checklist item...</p>
+      </Container>
     );
   }
 
-  // Renderizado condicional para errores
-  if (error) { // No incluimos !isSubmitting aquí para que el error permanezca visible si falla el envío
+  // Permisos: Analistas solo pueden crear/editar ítems para sus propias tareas
+  // Supervisores/Responsables pueden para cualquier tarea
+  const canAccessForm = user && (
+    user.role === 'SUPERVISOR' ||
+    user.role === 'RESPONSABLE' ||
+    (user.role === 'ANALISTA' && (
+      // Si estamos creando y la tareaId está presente, verificar que la tarea pertenece al analista
+      (!isEditing && tareaId && tareas.some(t => t.id === parseInt(tareaId) && t.analista_id === user.id)) ||
+      // Si estamos editando, verificar que el item pertenece a una tarea del analista
+      (isEditing && formData.tarea_id && tareas.some(t => t.id === parseInt(formData.tarea_id) && t.analista_id === user.id))
+    ))
+  );
+
+  if (!canAccessForm) {
     return (
-      <div className="container mt-4">
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-        {!authToken && (
-          <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
-        )}
-        <Link to={tareaId ? `/tareas/${tareaId}` : "/tareas"} className="btn btn-secondary mt-3">Volver</Link>
-      </div>
+      <Container className="mt-4">
+        <Alert variant="danger">
+          <Alert.Heading>Acceso Denegado</Alert.Heading>
+          <p>No tienes los permisos necesarios para acceder a este formulario de checklist item.</p>
+          <Button onClick={() => navigate('/dashboard')}>Ir al Dashboard</Button>
+        </Alert>
+      </Container>
     );
   }
 
   return (
-    <div className="container mt-4">
-      <h3 className="mb-4">{isEditMode ? 'Editar Ítem de Checklist' : 'Crear Nuevo Ítem de Checklist'}</h3>
-      {tarea && <p className="text-muted">Para la tarea: <strong>{tarea.titulo}</strong></p>}
-      <hr />
-      {error && isSubmitting && ( // Mostrar error de envío si existe
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      )}
-      <form onSubmit={handleSubmit}>
-        <div className="mb-3">
-          <label htmlFor="descripcionInput" className="form-label">Descripción:</label>
-          <input
-            type="text"
-            className="form-control rounded-md"
-            id="descripcionInput"
-            name="descripcion"
-            value={formData.descripcion}
-            onChange={handleChange}
-            required
-            disabled={isSubmitting}
-          />
-        </div>
-        <div className="mb-3 form-check">
-          <input
-            type="checkbox"
-            className="form-check-input rounded-md"
-            id="completadoCheckbox"
-            name="completado"
-            checked={formData.completado}
-            onChange={handleChange}
-            disabled={isSubmitting}
-          />
-          <label className="form-check-label" htmlFor="completadoCheckbox">Completado</label>
-        </div>
-        {/* El campo tarea_id no es editable por el usuario directamente en este formulario */}
-        <input type="hidden" name="tarea_id" value={formData.tarea_id} />
+    <Container className="py-5">
+      <Card className="shadow-lg p-4">
+        <h2 className="text-center mb-4 text-primary">{isEditing ? 'Editar Checklist Item' : 'Crear Nuevo Checklist Item'}</h2>
 
-        <div className="d-grid gap-2">
-          <button type="submit" className="btn btn-primary rounded-md" disabled={isSubmitting}>
-            {isSubmitting ? 'Guardando...' : (isEditMode ? 'Actualizar Ítem' : 'Crear Ítem')}
-          </button>
-          <button type="button" onClick={() => navigate(`/tareas/${formData.tarea_id}`)} className="btn btn-secondary rounded-md">
-            Cancelar
-          </button>
-        </div>
-      </form>
-    </div>
+        {success && <Alert variant="success">{success}</Alert>}
+        {error && <Alert variant="danger">{error}</Alert>}
+
+        <Form onSubmit={handleSubmit}>
+          <Form.Group className="mb-3" controlId="tarea_id">
+            <Form.Label>Tarea Asociada</Form.Label>
+            <Form.Select
+              name="tarea_id"
+              value={formData.tarea_id}
+              onChange={handleChange}
+              required
+              disabled={!!tareaId || isEditing} // Deshabilitar si viene de URL o si estamos editando
+            >
+              <option value="">Seleccionar Tarea</option>
+              {tareas.map(tarea => (
+                <option key={tarea.id} value={tarea.id}>
+                  {tarea.titulo} (ID: {tarea.id})
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+
+          <Form.Group className="mb-3" controlId="descripcion">
+            <Form.Label>Descripción</Form.Label>
+            <Form.Control
+              type="text"
+              name="descripcion"
+              value={formData.descripcion}
+              onChange={handleChange}
+              required
+            />
+          </Form.Group>
+
+          <Form.Group className="mb-3" controlId="completado">
+            <Form.Check
+              type="checkbox"
+              label="Completado"
+              name="completado"
+              checked={formData.completado}
+              onChange={handleChange}
+              disabled={user.role === 'ANALISTA' && !isEditing} // Analistas solo pueden cambiar completado al editar
+            />
+          </Form.Group>
+
+          <div className="d-grid gap-2 mt-4">
+            <Button variant="primary" type="submit" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
+                  {' '}
+                  Guardando...
+                </>
+              ) : (
+                isEditing ? 'Actualizar Item' : 'Crear Item'
+              )}
+            </Button>
+            <Button variant="secondary" onClick={() => navigate(formData.tarea_id ? `/tareas/${formData.tarea_id}` : '/tareas')} disabled={submitting}>
+              Cancelar
+            </Button>
+          </div>
+        </Form>
+      </Card>
+    </Container>
   );
 }
 
