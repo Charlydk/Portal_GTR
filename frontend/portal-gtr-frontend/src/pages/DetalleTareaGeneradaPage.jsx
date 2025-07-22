@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Card, Button, Alert, Spinner, Badge } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
+import HistorialTarea from '../components/HistorialTarea';
 
 function DetalleTareaGeneradaPage() {
   const { id } = useParams();
@@ -15,6 +16,11 @@ function DetalleTareaGeneradaPage() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const [historial, setHistorial] = useState([]);
+  const [showHistorial, setShowHistorial] = useState(false);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
+  const [errorHistorial, setErrorHistorial] = useState(null);
 
   const fetchTarea = useCallback(async () => {
     if (!authToken || !user) {
@@ -48,6 +54,32 @@ function DetalleTareaGeneradaPage() {
       fetchTarea();
     }
   }, [authLoading, user, fetchTarea]);
+
+
+  const handleFetchHistorial = async () => {
+    if (showHistorial) {
+      setShowHistorial(false);
+      return;
+    }
+    setLoadingHistorial(true);
+    setErrorHistorial(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/tareas_generadas_por_avisos/${id}/historial_estados`, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || "No se pudo cargar el historial.");
+      }
+      const data = await response.json();
+      setHistorial(data);
+      setShowHistorial(true);
+    } catch (error) {
+      setErrorHistorial(error.message);
+    } finally {
+      setLoadingHistorial(false);
+    }
+  };
 
   const handleMarcarCompletada = async () => {
     if (!authToken || !user || !tarea) return;
@@ -195,10 +227,18 @@ function DetalleTareaGeneradaPage() {
             </div>
           )}
           <div className="d-grid gap-2 mt-2">
+
+            <Button variant="info" onClick={handleFetchHistorial} disabled={loadingHistorial}>
+              {loadingHistorial ? 'Cargando...' : showHistorial ? 'Ocultar Historial' : 'Ver Historial'}
+            </Button>
             <Button variant="secondary" onClick={() => navigate('/dashboard')} disabled={submitting}>
               Volver al Dashboard
             </Button>
           </div>
+
+          {showHistorial && (
+            <HistorialTarea historial={historial} isLoading={loadingHistorial} error={errorHistorial} />
+          )}
         </Card.Body>
       </Card>
     </Container>

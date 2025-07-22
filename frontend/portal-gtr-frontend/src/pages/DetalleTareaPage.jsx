@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Card, Button, Alert, Spinner, ListGroup, Badge, Modal, Form } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
+import HistorialTarea from '../components/HistorialTarea';
 
 function DetalleTareaPage() {
   const { id } = useParams();
@@ -17,6 +18,11 @@ function DetalleTareaPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [submittingProgress, setSubmittingProgress] = useState(false); // Para el spinner de progreso
   const [submittingChecklist, setSubmittingChecklist] = useState(null); // Para el spinner de checklist item
+  
+  const [historial, setHistorial] = useState([]);
+  const [showHistorial, setShowHistorial] = useState(false);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
+  const [errorHistorial, setErrorHistorial] = useState(null);
 
   const fetchTarea = useCallback(async () => {
     if (!authToken || !user) {
@@ -50,6 +56,33 @@ function DetalleTareaPage() {
       fetchTarea();
     }
   }, [authLoading, user, fetchTarea]);
+
+
+   const handleFetchHistorial = async () => {
+    if (showHistorial) {
+      setShowHistorial(false);
+      return;
+    }
+
+    setLoadingHistorial(true);
+    setErrorHistorial(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/tareas/${id}/historial_estados`, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || "No se pudo cargar el historial.");
+      }
+      const data = await response.json();
+      setHistorial(data);
+      setShowHistorial(true);
+    } catch (error) {
+      setErrorHistorial(error.message);
+    } finally {
+      setLoadingHistorial(false);
+    }
+  };
 
   const handleUpdateProgress = async (newProgress) => {
     if (!authToken || !user || !tarea) return;
@@ -245,6 +278,9 @@ function DetalleTareaPage() {
       </Container>
     );
   }
+  
+  // ✅ CORRECCIÓN 1: DEFINICIÓN DE LA VARIABLE ANTES DEL RETURN
+  const esTareaFinalizada = tarea.progreso === 'COMPLETADA' || tarea.progreso === 'CANCELADA';
 
   return (
     <Container className="py-5">
@@ -276,6 +312,10 @@ function DetalleTareaPage() {
           <Card.Text>
             <strong>Fecha de Vencimiento:</strong> {formatDateTime(tarea.fecha_vencimiento)}
           </Card.Text>
+
+          {esTareaFinalizada && tarea.fecha_finalizacion && (
+            <Card.Text><strong>Fecha de Finalización:</strong> {formatDateTime(tarea.fecha_finalizacion)}</Card.Text>
+          )}
 
           {/* Opciones de progreso para analistas asignados */}
           {user.role === 'ANALISTA' && tarea.analista_id === user.id && tarea.progreso !== 'COMPLETADA' && (
@@ -354,6 +394,7 @@ function DetalleTareaPage() {
             <Alert variant="info">No hay checklist items para esta tarea.</Alert>
           )}
 
+          {/* ✅ CORRECCIÓN 2: BOTÓN AÑADIDO AL GRUPO DE ACCIONES */}
           <div className="d-grid gap-2 mt-4">
             {canEditTask && (
               <Button variant="secondary" onClick={() => navigate(`/tareas/editar/${tarea.id}`)}>
@@ -365,10 +406,18 @@ function DetalleTareaPage() {
                 Eliminar Tarea
               </Button>
             )}
+            <Button variant="info" onClick={handleFetchHistorial} disabled={loadingHistorial}>
+              {loadingHistorial ? 'Cargando...' : showHistorial ? 'Ocultar Historial' : 'Ver Historial'}
+            </Button>
             <Button variant="outline-secondary" onClick={() => navigate('/tareas')}>
               Volver a la Lista de Tareas
             </Button>
           </div>
+
+           {showHistorial && (
+            <HistorialTarea historial={historial} isLoading={loadingHistorial} error={errorHistorial} />
+          )}
+
         </Card.Body>
       </Card>
 

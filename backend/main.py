@@ -5,17 +5,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func
-from datetime import timedelta, date
+from datetime import timedelta, date, datetime # Importar datetime
 from typing import Optional, List
 
 # Importamos los modelos de SQLAlchemy (para la DB)
 from sql_app import models
-from sql_app.models import UserRole, ProgresoTarea # Importar ProgresoTarea también
+from sql_app.models import UserRole, ProgresoTarea, TipoIncidencia # Importar ProgresoTarea y TipoIncidencia
+from enums import UserRole, ProgresoTarea, TipoIncidencia
+
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
     Token, TokenData,
-    ProgresoTarea, UserRole,
+    ProgresoTarea, UserRole, TipoIncidencia, # Asegurarse de importar TipoIncidencia aquí
     AnalistaBase, Analista, AnalistaCreate, PasswordUpdate, AnalistaMe,
     CampanaBase, Campana, CampanaSimple,
     TareaBase, Tarea, TareaSimple, TareaListOutput, TareaUpdate,
@@ -27,7 +29,9 @@ from schemas.models import (
     BitacoraGeneralCommentBase, BitacoraGeneralCommentUpdate, BitacoraGeneralComment,
     BitacoraEntrySimple, BitacoraGeneralCommentSimple,
     # Nuevos esquemas para TareaGeneradaPorAviso
-    TareaGeneradaPorAvisoBase, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAviso, TareaGeneradaPorAvisoSimple
+    TareaGeneradaPorAvisoBase, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAviso, TareaGeneradaPorAvisoSimple,
+    # Nuevos esquemas para HistorialEstadoTarea
+    HistorialEstadoTareaBase, HistorialEstadoTarea, HistorialEstadoTareaSimple
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -117,7 +121,8 @@ async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSes
 def require_role(required_roles: List[UserRole]):
     """Dependencia para requerir roles específicos."""
     def role_checker(current_analista: models.Analista = Depends(get_current_analista)):
-        if current_analista.role not in [r.value for r in required_roles]:
+        # CORRECCIÓN: Comparar los valores de cadena de los Enums
+        if current_analista.role.value not in [r.value for r in required_roles]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No tienes permiso para realizar esta acción."
@@ -172,13 +177,7 @@ async def register_analista(analista: AnalistaCreate, db: AsyncSession = Depends
         if not analista_to_return:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después del registro.")
         return analista_to_return
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al registrar analista: {e}"
-        )
-    except Exception as e:
+    except Exception as e: # Captura excepciones más generales para rollback
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -206,8 +205,9 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    # CORRECCIÓN: Pasar el valor de cadena del Enum UserRole
     access_token = create_access_token(
-        data={"sub": analista.email, "role": analista.role},
+        data={"sub": analista.email, "role": analista.role.value}, # <-- .value para obtener la cadena
         expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
@@ -271,13 +271,8 @@ async def crear_analista(
         analista_to_return = result.scalars().first()
         if not analista_to_return:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la creación.")
+        
         return analista_to_return
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear analista: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -418,12 +413,6 @@ async def actualizar_analista(
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la actualización.")
         
         return analista_to_return
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar analista: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -478,12 +467,6 @@ async def update_analista_password(
         if not analista_to_return:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la actualización de contraseña.")
         return analista_to_return
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar contraseña: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -516,12 +499,6 @@ async def desactivar_analista(
     
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al desactivar analista: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -583,12 +560,6 @@ async def asignar_campana_a_analista(
     analista.campanas_asignadas.append(campana)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al asignar campana: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -609,7 +580,7 @@ async def asignar_campana_a_analista(
     )
     analista_to_return = result.scalars().first()
     if not analista_to_return:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la asignación.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el analista después de la desasignación.")
     return analista_to_return
 
 @app.delete("/analistas/{analista_id}/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Desasignar Campana de Analista (Protegido)")
@@ -660,12 +631,6 @@ async def desasignar_campana_de_analista(
     analista.campanas_asignadas.remove(campana)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al desasignar campana: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -701,16 +666,17 @@ async def crear_campana(
     Crea una nueva campaña en el sistema y la guarda en la base de datos.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
-    db_campana = models.Campana(**campana.model_dump())
+    # CORRECCIÓN: Asegurarse de que las fechas sean timezone-naive
+    campana_data = campana.model_dump()
+    if campana_data.get("fecha_inicio") is not None:
+        campana_data["fecha_inicio"] = campana_data["fecha_inicio"].replace(tzinfo=None)
+    if campana_data.get("fecha_fin") is not None:
+        campana_data["fecha_fin"] = campana_data["fecha_fin"].replace(tzinfo=None)
+
+    db_campana = models.Campana(**campana_data) # Usar campana_data modificada
     db.add(db_campana)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear campaña: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -808,41 +774,43 @@ async def actualizar_campana(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada")
 
     campana_data = campana_update.model_dump(exclude_unset=True)
+    
+    # CORRECCIÓN: Asegurarse de que las fechas sean timezone-naive al actualizar
+    if "fecha_inicio" in campana_data and campana_data["fecha_inicio"] is not None:
+        campana_data["fecha_inicio"] = campana_data["fecha_inicio"].replace(tzinfo=None)
+    if "fecha_fin" in campana_data and campana_data["fecha_fin"] is not None:
+        campana_data["fecha_fin"] = campana_data["fecha_fin"].replace(tzinfo=None)
+
     for key, value in campana_data.items():
         setattr(campana_existente, key, value)
 
     try:
         await db.commit()
         await db.refresh(campana_existente)
-        result = await db.execute(
-            select(models.Campana)
-            .filter(models.Campana.id == campana_existente.id)
-            .options(
-                selectinload(models.Campana.analistas_asignados),
-                selectinload(models.Campana.tareas),
-                selectinload(models.Campana.comentarios),
-                selectinload(models.Campana.avisos),
-                selectinload(models.Campana.bitacora_entries),
-                selectinload(models.Campana.bitacora_general_comment)
-            )
-        )
-        campana_to_return = result.scalars().first()
-        if not campana_to_return:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la campaña después de la actualización.")
-        
-        return campana_to_return
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar campaña: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al actualizar campaña: {e}"
         )
+    
+    updated_campana_result = await db.execute(
+        select(models.Campana)
+        .filter(models.Campana.id == campana_id)
+        .options(
+            selectinload(models.Campana.analistas_asignados),
+            selectinload(models.Campana.tareas),
+            selectinload(models.Campana.comentarios),
+            selectinload(models.Campana.avisos),
+            selectinload(models.Campana.bitacora_entries),
+            selectinload(models.Campana.bitacora_general_comment)
+        )
+    )
+    updated_campana = updated_campana_result.scalars().first()
+    if not updated_campana:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la campaña después de la actualización.")
+    
+    return updated_campana
 
 
 @app.delete("/campanas/{campana_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Campaña (Protegido por Supervisor)")
@@ -864,12 +832,6 @@ async def eliminar_campana(
     try:
         await db.delete(campana_a_eliminar)
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al eliminar campaña: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -885,7 +847,7 @@ async def eliminar_campana(
 async def crear_tarea(
     tarea: TareaBase,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(get_current_analista) # Ahora todos los roles autenticados pueden intentar crear
+    current_analista: models.Analista = Depends(get_current_analista)
 ):
     """
     Crea una nueva tarea en el sistema y la guarda en la base de datos.
@@ -895,6 +857,10 @@ async def crear_tarea(
         - Si tienen campana_id, el analista debe estar asignado a esa campaña.
     - Un Supervisor o Responsable pueden crear tareas para cualquier analista y/o campaña.
     """
+    # Guardar el ID y el rol del analista actual antes de cualquier commit que pueda expirarlo
+    current_analista_id = current_analista.id
+    current_analista_role = current_analista.role # También capturar el rol si se usa en lógica posterior
+
     # Validar que el analista_id de la tarea existe
     analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea.analista_id))
     analista_existente = analista_result.scalars().first()
@@ -909,18 +875,22 @@ async def crear_tarea(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Campaña con ID {tarea.campana_id} no encontrada.")
 
     # Lógica de permisos
-    if current_analista.role == UserRole.ANALISTA.value:
+    if current_analista_role == UserRole.ANALISTA.value: # Usar la variable local del rol
         # Un analista solo puede crear tareas para sí mismo
-        if tarea.analista_id != current_analista.id:
+        if tarea.analista_id != current_analista_id: # Usar la variable local del ID
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Analista solo puede crear tareas para sí mismo.")
         
         # Si la tarea tiene campana_id, el analista debe estar asignado a esa campaña
         if tarea.campana_id:
-            is_assigned_to_campaign = False
-            for assigned_campana in current_analista.campanas_asignadas:
-                if assigned_campana.id == tarea.campana_id:
-                    is_assigned_to_campaign = True
-                    break
+            # Recargar el analista con campanas asignadas si no está ya cargado para esta comprobación
+            # O mejor, hacer una consulta directa para evitar problemas de expiración
+            is_assigned_to_campaign_result = await db.execute(
+                select(models.analistas_campanas.c.campana_id)
+                .where(models.analistas_campanas.c.analista_id == current_analista_id)
+                .where(models.analistas_campanas.c.campana_id == tarea.campana_id)
+            )
+            is_assigned_to_campaign = is_assigned_to_campaign_result.scalars().first() is not None
+
             if not is_assigned_to_campaign:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear tareas en esta campaña. No estás asignado a ella.")
     
@@ -928,34 +898,55 @@ async def crear_tarea(
     # La validación de existencia de analista y campaña ya se hizo arriba.
 
     tarea_data_dict = tarea.model_dump()
+    # CORRECCIÓN: Asegurarse de que la fecha de vencimiento sea timezone-naive
+    if tarea_data_dict.get("fecha_vencimiento") is not None:
+        tarea_data_dict["fecha_vencimiento"] = tarea_data_dict["fecha_vencimiento"].replace(tzinfo=None)
+
     db_tarea = models.Tarea(
         **tarea_data_dict
     )
     db.add(db_tarea)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear tarea: {e}"
-        )
+        await db.refresh(db_tarea) # Refresh para obtener el ID generado y otros valores por defecto
+        
+        # Capturar el ID y el progreso como escalares después del primer commit y refresh
+        new_tarea_id = db_tarea.id
+        new_tarea_progreso = db_tarea.progreso
+        
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al crear tarea: {e}"
         )
-    await db.refresh(db_tarea)
+
+    # Registrar el estado inicial de la tarea
+    historial_entry = models.HistorialEstadoTarea(
+        old_progreso=None, # El primer estado no tiene un estado anterior
+        new_progreso=new_tarea_progreso, # Usar la variable escalar capturada
+        changed_by_analista_id=current_analista_id, # Usar la variable local
+        tarea_campana_id=new_tarea_id # Usar la variable local
+    )
+    db.add(historial_entry)
+    try:
+        await db.commit() # Este commit podría expirar db_tarea nuevamente
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al registrar el historial de la tarea: {e}"
+        )
 
     result = await db.execute(
         select(models.Tarea)
         .options(
             selectinload(models.Tarea.analista),
             selectinload(models.Tarea.campana),
-            selectinload(models.Tarea.checklist_items)
+            selectinload(models.Tarea.checklist_items),
+            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista) # Cargar historial para la respuesta
         )
-        .filter(models.Tarea.id == db_tarea.id)
+        .filter(models.Tarea.id == new_tarea_id) # Usar la variable escalar capturada
     )
     tarea_to_return = result.scalars().first()
     if not tarea_to_return:
@@ -1009,7 +1000,8 @@ async def obtener_tarea_por_id(
         .options(
             selectinload(models.Tarea.analista),
             selectinload(models.Tarea.campana),
-            selectinload(models.Tarea.checklist_items)
+            selectinload(models.Tarea.checklist_items),
+            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista) # Cargar historial con el analista que hizo el cambio
         )
     )
     tarea = result.scalars().first()
@@ -1030,20 +1022,10 @@ async def actualizar_tarea(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Actualiza la información de una tarea existente.
-    Requiere autenticación.
-    Un Analista solo puede actualizar el progreso y la descripción de sus propias tareas.
-    Un Supervisor o Responsable pueden actualizar cualquier campo de cualquier tarea.
-    """
+    current_analista_id = current_analista.id
+
     db_tarea_result = await db.execute(
-        select(models.Tarea)
-        .filter(models.Tarea.id == tarea_id)
-        .options(
-            selectinload(models.Tarea.analista),
-            selectinload(models.Tarea.campana),
-            selectinload(models.Tarea.checklist_items)
-        )
+        select(models.Tarea).filter(models.Tarea.id == tarea_id)
     )
     tarea_existente = db_tarea_result.scalars().first()
 
@@ -1051,71 +1033,63 @@ async def actualizar_tarea(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada")
 
     update_data = tarea_update.model_dump(exclude_unset=True)
-    
-    if current_analista.role == UserRole.ANALISTA.value:
+    old_progreso = tarea_existente.progreso
+
+    # --- 👇 LA CORRECCIÓN FINAL Y DEFINITIVA ESTÁ AQUÍ ---
+    # Comparamos los valores de texto (.value) para ser 100% seguros
+    if current_analista.role.value == UserRole.ANALISTA.value:
         if tarea_existente.analista_id != current_analista.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar esta tarea. Solo puedes actualizar tus propias tareas.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Analista solo puede actualizar sus propias tareas.")
         
-        allowed_fields_for_analist = {"progreso", "descripcion"}
-        
-        filtered_update_data = {
-            k: v for k, v in update_data.items() if k in allowed_fields_for_analist
-        }
-        
-        for key, value in filtered_update_data.items():
-            setattr(tarea_existente, key, value)
+        if "progreso" in update_data:
+            tarea_existente.progreso = update_data["progreso"]
+        if "descripcion" in update_data:
+            tarea_existente.descripcion = update_data["descripcion"]
 
-    elif current_analista.role in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
-        if "analista_id" in update_data and update_data["analista_id"] != tarea_existente.analista_id:
-            analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == update_data["analista_id"]))
-            if analista_result.scalars().first() is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {update_data['analista_id']} no encontrado.")
-            tarea_existente.analista_id = update_data["analista_id"]
-        
-        if "campana_id" in update_data and update_data["campana_id"] != tarea_existente.campana_id:
-            campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == update_data["campana_id"]))
-            if campana_result.scalars().first() is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nueva Campaña con ID {update_data['campana_id']} no encontrada.")
-            tarea_existente.campana_id = update_data["campana_id"]
-
+    elif current_analista.role.value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
         for key, value in update_data.items():
-            if key not in ["analista_id", "campana_id"]:
+            if key == "fecha_vencimiento" and value is not None:
+                setattr(tarea_existente, key, value.replace(tzinfo=None))
+            else:
                 setattr(tarea_existente, key, value)
-            elif key == "progreso":
-                setattr(tarea_existente, key, value)
-    
-    else:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar tareas con tu rol actual.")
+    # --- 👆 FIN DE LA CORRECCIÓN ---
 
+    if "progreso" in update_data and tarea_existente.progreso != old_progreso:
+        historial_entry = models.HistorialEstadoTarea(
+            old_progreso=old_progreso,
+            new_progreso=tarea_existente.progreso,
+            changed_by_analista_id=current_analista_id,
+            tarea_campana_id=tarea_existente.id
+        )
+        db.add(historial_entry)
+
+        if tarea_existente.progreso in [ProgresoTarea.COMPLETADA, ProgresoTarea.CANCELADA]:
+            tarea_existente.fecha_finalizacion = datetime.utcnow().replace(tzinfo=None)
+        elif old_progreso in [ProgresoTarea.COMPLETADA, ProgresoTarea.CANCELADA] and \
+             tarea_existente.progreso in [ProgresoTarea.PENDIENTE, ProgresoTarea.EN_PROGRESO]:
+            tarea_existente.fecha_finalizacion = None
+    
     try:
         await db.commit()
         await db.refresh(tarea_existente)
-        result = await db.execute(
-            select(models.Tarea)
-            .filter(models.Tarea.id == tarea_existente.id)
-            .options(
-                selectinload(models.Tarea.analista),
-                selectinload(models.Tarea.campana),
-                selectinload(models.Tarea.checklist_items)
-            )
-        )
-        tarea_to_return = result.scalars().first()
-        if not tarea_to_return:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la tarea después de la actualización.")
-        
-        return tarea_to_return
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar tarea: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al actualizar tarea: {e}"
         )
+    
+    result = await db.execute(
+        select(models.Tarea)
+        .filter(models.Tarea.id == tarea_existente.id)
+        .options(
+            selectinload(models.Tarea.analista),
+            selectinload(models.Tarea.campana),
+            selectinload(models.Tarea.checklist_items),
+            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista)
+        )
+    )
+    return result.scalars().first()
 
 @app.delete("/tareas/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea (Protegido por Supervisor)")
 async def eliminar_tarea(
@@ -1135,13 +1109,9 @@ async def eliminar_tarea(
 
     try:
         await db.delete(tarea_a_eliminar)
+        # Opcional: Eliminar los historial_estados relacionados si no se hace en cascada a nivel de DB
+        # await db.execute(delete(models.HistorialEstadoTarea).where(models.HistorialEstadoTarea.tarea_campana_id == tarea_id))
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al eliminar tarea: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1157,7 +1127,7 @@ async def eliminar_tarea(
 async def crear_checklist_item(
     item: ChecklistItemBase,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(get_current_analista) # Ahora todos los roles autenticados pueden intentar crear
+    current_analista: models.Analista = Depends(get_current_analista)
 ):
     """
     Crea un nuevo elemento de checklist asociado a una tarea.
@@ -1185,12 +1155,6 @@ async def crear_checklist_item(
     db.add(db_item)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear checklist item: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1293,7 +1257,7 @@ async def actualizar_checklist_item(
         if "completado" in update_data:
             item_existente.completado = update_data["completado"]
         else:
-            pass
+            pass # Si el analista intenta actualizar otra cosa, simplemente no se hace
             
     elif current_analista.role in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
         if "tarea_id" in update_data and update_data["tarea_id"] != item_existente.tarea_id:
@@ -1313,12 +1277,6 @@ async def actualizar_checklist_item(
 
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar checklist item: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1355,12 +1313,6 @@ async def eliminar_checklist_item(
     try:
         await db.delete(item_a_eliminar)
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al eliminar checklist item: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1394,12 +1346,6 @@ async def crear_comentario_campana(
     db.add(db_comentario)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear comentario de campaña: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1463,12 +1409,6 @@ async def eliminar_comentario_campana(
     try:
         await db.delete(comentario_a_eliminar)
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al eliminar comentario de campaña: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1506,17 +1446,18 @@ async def crear_aviso(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Si 'requiere_tarea' es True, 'fecha_vencimiento_tarea' no puede ser nula."
         )
+    
+    # Asegurarse de que las fechas en el aviso sean timezone-naive
+    aviso_data = aviso.model_dump()
+    if aviso_data.get("fecha_vencimiento") is not None:
+        aviso_data["fecha_vencimiento"] = aviso_data["fecha_vencimiento"].replace(tzinfo=None)
+    if aviso_data.get("fecha_vencimiento_tarea") is not None:
+        aviso_data["fecha_vencimiento_tarea"] = aviso_data["fecha_vencimiento_tarea"].replace(tzinfo=None)
 
-    db_aviso = models.Aviso(**aviso.model_dump())
+    db_aviso = models.Aviso(**aviso_data)
     db.add(db_aviso)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear aviso: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1616,7 +1557,6 @@ async def obtener_aviso_por_id(
             assigned_campaign_ids = [c_id for (c_id,) in assigned_campaigns_result.all()]
             is_assigned_to_campaign = aviso.campana_id in assigned_campaign_ids
         
-        # El analista puede ver el aviso si: lo creó, es general, o está asignado a su campaña
         if not is_creator and not is_general_aviso and not is_assigned_to_campaign:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver este aviso.")
 
@@ -1662,6 +1602,12 @@ async def actualizar_aviso(
         aviso_existente.campana_id = None
 
     aviso_data = aviso_update.model_dump(exclude_unset=True)
+    # Asegurarse de que las fechas en el aviso sean timezone-naive al actualizar
+    if "fecha_vencimiento" in aviso_data and aviso_data["fecha_vencimiento"] is not None:
+        aviso_data["fecha_vencimiento"] = aviso_data["fecha_vencimiento"].replace(tzinfo=None)
+    if "fecha_vencimiento_tarea" in aviso_data and aviso_data["fecha_vencimiento_tarea"] is not None:
+        aviso_data["fecha_vencimiento_tarea"] = aviso_data["fecha_vencimiento_tarea"].replace(tzinfo=None)
+
     for key, value in aviso_data.items():
         if key not in ['creador_id', 'campana_id']:
             setattr(aviso_existente, key, value)
@@ -1669,12 +1615,6 @@ async def actualizar_aviso(
     try:
         await db.commit()
         await db.refresh(aviso_existente)
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar aviso: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1718,12 +1658,6 @@ async def eliminar_aviso(
     try:
         await db.delete(aviso_a_eliminar)
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al eliminar aviso: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1747,6 +1681,9 @@ async def registrar_acuse_recibo(
     Requiere autenticación. Un analista solo puede acusar recibo para sí mismo.
     Si el aviso requiere una tarea, se genera una nueva tarea para el analista.
     """
+    # Guardar el ID del analista actual antes de cualquier commit que pueda expirarlo
+    current_analista_id = current_analista.id
+
     analista_id = acuse_data.analista_id
 
     if current_analista.role == UserRole.ANALISTA.value and analista_id != current_analista.id:
@@ -1792,25 +1729,29 @@ async def registrar_acuse_recibo(
             new_generated_task = models.TareaGeneradaPorAviso(
                 titulo=f"Tarea de Aviso: {aviso_existente.titulo}",
                 descripcion=f"Realizar la acción solicitada en el aviso: {aviso_existente.contenido}",
-                fecha_vencimiento=aviso_existente.fecha_vencimiento_tarea,
+                # CORRECCIÓN: Asegurarse de que fecha_vencimiento_tarea sea timezone-naive
+                fecha_vencimiento=aviso_existente.fecha_vencimiento_tarea.replace(tzinfo=None) if aviso_existente.fecha_vencimiento_tarea else None,
                 progreso=ProgresoTarea.PENDIENTE.value,
                 analista_asignado_id=analista_id,
                 aviso_origen_id=aviso_id
             )
             db.add(new_generated_task)
             print(f"Tarea generada para analista {analista_id} por aviso {aviso_id}") # Para depuración
+            
+            # Registrar el estado inicial de la tarea generada
+            historial_entry = models.HistorialEstadoTarea(
+                new_progreso=new_generated_task.progreso,
+                changed_by_analista_id=current_analista_id, # El analista que acusa recibo es quien "crea" la tarea generada
+                tarea_generada_id=new_generated_task.id # El ID de la tarea generada aún no está disponible aquí
+            )
+            db.add(historial_entry)
+
         else:
             print(f"Tarea ya existe para analista {analista_id} por aviso {aviso_id}. No se crea duplicado.") # Para depuración
 
 
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al registrar acuse de recibo o generar tarea: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1990,12 +1931,6 @@ async def create_bitacora_entry(
     db.add(db_entry)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear entrada de bitácora: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -2063,12 +1998,6 @@ async def update_bitacora_entry(
 
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar entrada de bitácora: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -2111,12 +2040,6 @@ async def delete_bitacora_entry(
     await db.delete(db_entry)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al eliminar entrada de bitácora: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -2190,12 +2113,6 @@ async def upsert_bitacora_general_comment(
     
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al guardar comentario general de bitácora: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -2210,7 +2127,7 @@ async def upsert_bitacora_general_comment(
 async def get_incidencias_filtered(
     db: AsyncSession = Depends(get_db),
     analista_id: Optional[int] = None,
-    tipo_incidencia: Optional[str] = None,
+    tipo_incidencia: Optional[TipoIncidencia] = None, # Usar el Enum TipoIncidencia
     fecha: Optional[date] = None, # Opcional para filtrar por fecha específica
     current_analista: models.Analista = Depends(get_current_analista)
 ):
@@ -2230,7 +2147,7 @@ async def get_incidencias_filtered(
             select(models.analistas_campanas.c.campana_id)
             .where(models.analistas_campanas.c.analista_id == current_analista.id)
         )
-        assigned_campaign_ids = [c_id for (c_id,) in assigned_campaign_ids_result.all()]
+        assigned_campaign_ids = [c_id for (c_id,) in assigned_campaigns_result.all()]
         query = query.filter(models.BitacoraEntry.campana_id.in_(assigned_campaign_ids))
     else: # Supervisor o Responsable
         if analista_id:
@@ -2239,10 +2156,8 @@ async def get_incidencias_filtered(
             # Sin embargo, dado que `BitacoraEntry` no tiene una relación directa con `Analista`,
             # y la incidencia es solo un tipo de entrada, el filtro por `analista_id`
             # en este contexto es más complejo si queremos saber "quién la registró".
-            # Por simplicidad, si el analista_id se refiere al analista de la campaña,
-            # lo haríamos así:
-            # query = query.join(models.Campana).join(models.analistas_campanas).filter(models.analistas_campanas.c.analista_id == analista_id)
-            pass # Dejamos el filtro de analista para el frontend si el backend no lo soporta directamente sin un `registrador_id`
+            # Por simplicidad, lo dejamos sin filtro por analista_id aquí.
+            pass
         
     if tipo_incidencia:
         query = query.filter(models.BitacoraEntry.tipo_incidencia == tipo_incidencia)
@@ -2268,6 +2183,9 @@ async def create_tarea_generada_por_aviso(
     Crea una nueva tarea que puede ser generada por un aviso.
     Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
     """
+    # Guardar el ID del analista actual antes de cualquier commit que pueda expirarlo
+    current_analista_id = current_analista.id
+
     analista_existente_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea.analista_asignado_id))
     if not analista_existente_result.scalars().first():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista asignado no encontrado.")
@@ -2277,30 +2195,53 @@ async def create_tarea_generada_por_aviso(
         if not aviso_existente_result.scalars().first():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aviso de origen no encontrado.")
 
-    db_tarea = models.TareaGeneradaPorAviso(**tarea.model_dump())
+    # Asegurarse de que las fechas en la tarea generada sean timezone-naive
+    tarea_data = tarea.model_dump()
+    if tarea_data.get("fecha_vencimiento") is not None:
+        tarea_data["fecha_vencimiento"] = tarea_data["fecha_vencimiento"].replace(tzinfo=None)
+
+    db_tarea = models.TareaGeneradaPorAviso(**tarea_data)
     db.add(db_tarea)
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al crear tarea generada por aviso: {e}"
-        )
+        await db.refresh(db_tarea) # Refresh para obtener el ID generado y otros valores por defecto
+
+        # Capturar el ID y el progreso como escalares después del primer commit y refresh
+        new_tarea_id = db_tarea.id
+        new_tarea_progreso = db_tarea.progreso
+
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al crear tarea generada por aviso: {e}"
         )
-    await db.refresh(db_tarea)
+    
+    # Registrar el estado inicial de la tarea generada
+    historial_entry = models.HistorialEstadoTarea(
+        old_progreso=None, # El primer estado no tiene un estado anterior
+        new_progreso=new_tarea_progreso, # Usar la variable escalar capturada
+        changed_by_analista_id=current_analista_id, # Usar la variable local
+        tarea_generada_id=new_tarea_id # Usar la variable local
+    )
+    db.add(historial_entry)
+    try:
+        await db.commit() # Este commit podría expirar db_tarea nuevamente
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al registrar el historial de la tarea generada: {e}"
+        )
+
     # Cargar relaciones para la respuesta
     result = await db.execute(
         select(models.TareaGeneradaPorAviso)
-        .filter(models.TareaGeneradaPorAviso.id == db_tarea.id)
+        .filter(models.TareaGeneradaPorAviso.id == new_tarea_id) # Usar la variable escalar capturada
         .options(
             selectinload(models.TareaGeneradaPorAviso.analista_asignado),
-            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen),
+            selectinload(models.TareaGeneradaPorAviso.historial_estados) # Cargar historial para la respuesta
         )
     )
     tarea_to_return = result.scalars().first()
@@ -2324,7 +2265,8 @@ async def get_all_tareas_generadas_por_avisos(
     """
     query = select(models.TareaGeneradaPorAviso).options(
         selectinload(models.TareaGeneradaPorAviso.analista_asignado),
-        selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+        selectinload(models.TareaGeneradaPorAviso.aviso_origen),
+        selectinload(models.TareaGeneradaPorAviso.historial_estados)
     )
 
     if current_analista.role == UserRole.ANALISTA.value:
@@ -2355,7 +2297,8 @@ async def get_tarea_generada_por_aviso_by_id(
         .filter(models.TareaGeneradaPorAviso.id == tarea_id)
         .options(
             selectinload(models.TareaGeneradaPorAviso.analista_asignado),
-            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen),
+            selectinload(models.TareaGeneradaPorAviso.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista) # Cargar historial con el analista que hizo el cambio
         )
     )
     tarea = result.scalars().first()
@@ -2375,18 +2318,15 @@ async def update_tarea_generada_por_aviso(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Actualiza una tarea generada por aviso existente.
-    Requiere autenticación.
-    Un Analista solo puede actualizar el progreso de sus propias tareas generadas.
-    Un Supervisor o Responsable pueden actualizar cualquier campo de cualquier tarea generada.
-    """
+    current_analista_id = current_analista.id
+
     db_tarea_result = await db.execute(
         select(models.TareaGeneradaPorAviso)
         .filter(models.TareaGeneradaPorAviso.id == tarea_id)
         .options(
             selectinload(models.TareaGeneradaPorAviso.analista_asignado),
-            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen),
+            selectinload(models.TareaGeneradaPorAviso.historial_estados)
         )
     )
     tarea_existente = db_tarea_result.scalars().first()
@@ -2395,68 +2335,68 @@ async def update_tarea_generada_por_aviso(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea generada por aviso no encontrada.")
 
     update_data = tarea_update.model_dump(exclude_unset=True)
+    old_progreso = tarea_existente.progreso
 
-    if current_analista.role == UserRole.ANALISTA.value:
+    # --- 👇 AQUÍ ESTÁ LA CORRECCIÓN, IGUAL QUE EN LA OTRA FUNCIÓN ---
+    # Comparamos los valores de texto (.value) para ser 100% seguros
+    if current_analista.role.value == UserRole.ANALISTA.value:
         if tarea_existente.analista_asignado_id != current_analista.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar esta tarea. Solo puedes actualizar tus propias tareas generadas.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo puedes actualizar tus propias tareas generadas.")
         
         # Un analista solo puede actualizar el progreso
         if "progreso" in update_data:
-            tarea_existente.progreso = update_data["progreso"].value # Asegurarse de guardar el valor del Enum
+            tarea_existente.progreso = update_data["progreso"]
         else:
+            # Si el payload no incluye 'progreso', no se permite la actualización para un Analista.
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Los analistas solo pueden actualizar el progreso de sus tareas generadas.")
-            
-    elif current_analista.role in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
-        if "analista_asignado_id" in update_data and update_data["analista_asignado_id"] != tarea_existente.analista_asignado_id:
-            analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == update_data["analista_asignado_id"]))
-            if analista_result.scalars().first() is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Analista con ID {update_data['analista_asignado_id']} no encontrado.")
-            tarea_existente.analista_asignado_id = update_data["analista_asignado_id"]
-        
-        if "aviso_origen_id" in update_data and update_data["aviso_origen_id"] != tarea_existente.aviso_origen_id:
-            aviso_result = await db.execute(select(models.Aviso).filter(models.Aviso.id == update_data["aviso_origen_id"]))
-            if aviso_result.scalars().first() is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Nuevo Aviso con ID {update_data['aviso_origen_id']} no encontrado.")
-            tarea_existente.aviso_origen_id = update_data["aviso_origen_id"]
 
+    elif current_analista.role.value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
         for key, value in update_data.items():
-            if key not in ["analista_asignado_id", "aviso_origen_id"]:
-                if key == "progreso":
-                    setattr(tarea_existente, key, value.value) # Asegurarse de guardar el valor del Enum
-                else:
-                    setattr(tarea_existente, key, value)
+            if key == "fecha_vencimiento" and value is not None:
+                setattr(tarea_existente, key, value.replace(tzinfo=None))
+            else:
+                setattr(tarea_existente, key, value)
+    # --- 👆 FIN DE LA CORRECCIÓN ---
     
     else:
+        # Este else se activaba incorrectamente antes de la corrección
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar tareas generadas con tu rol actual.")
+
+    if "progreso" in update_data and tarea_existente.progreso != old_progreso:
+        historial_entry = models.HistorialEstadoTarea(
+            old_progreso=old_progreso,
+            new_progreso=tarea_existente.progreso,
+            changed_by_analista_id=current_analista_id,
+            tarea_generada_id=tarea_existente.id
+        )
+        db.add(historial_entry)
+
+        if tarea_existente.progreso in [ProgresoTarea.COMPLETADA, ProgresoTarea.CANCELADA]:
+            tarea_existente.fecha_finalizacion = datetime.utcnow().replace(tzinfo=None)
+        elif old_progreso in [ProgresoTarea.COMPLETADA, ProgresoTarea.CANCELADA] and \
+             tarea_existente.progreso in [ProgresoTarea.PENDIENTE, ProgresoTarea.EN_PROGRESO]:
+            tarea_existente.fecha_finalizacion = None
 
     try:
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al actualizar tarea generada: {e}"
-        )
+        await db.refresh(tarea_existente)
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al actualizar tarea generada: {e}"
         )
-    await db.refresh(tarea_existente)
+    
     result = await db.execute(
         select(models.TareaGeneradaPorAviso)
         .filter(models.TareaGeneradaPorAviso.id == tarea_existente.id)
         .options(
             selectinload(models.TareaGeneradaPorAviso.analista_asignado),
-            selectinload(models.TareaGeneradaPorAviso.aviso_origen)
+            selectinload(models.TareaGeneradaPorAviso.aviso_origen),
+            selectinload(models.TareaGeneradaPorAviso.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista)
         )
     )
-    tarea_to_return = result.scalars().first()
-    if not tarea_to_return:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar la tarea generada después de la actualización.")
-    
-    return tarea_to_return
+    return result.scalars().first()
 
 @app.delete("/tareas_generadas_por_avisos/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea Generada por Aviso (Protegido por Supervisor)")
 async def delete_tarea_generada_por_aviso(
@@ -2476,13 +2416,9 @@ async def delete_tarea_generada_por_aviso(
 
     try:
         await db.delete(tarea_a_eliminar)
+        # Opcional: Eliminar los historial_estados relacionados si no se hace en cascada a nivel de DB
+        # await db.execute(delete(models.HistorialEstadoTarea).where(models.HistorialEstadoTarea.tarea_generada_id == tarea_id))
         await db.commit()
-    except ProgrammingError as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error de base de datos al eliminar tarea generada: {e}"
-        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -2491,3 +2427,64 @@ async def delete_tarea_generada_por_aviso(
         )
     return
 
+# NUEVO ENDPOINT: Obtener historial de estados para una tarea específica
+@app.get("/tareas/{tarea_id}/historial_estados", response_model=List[HistorialEstadoTarea], summary="Obtener Historial de Estados de una Tarea (Protegido)")
+async def get_tarea_historial_estados(
+    tarea_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Obtiene el historial de cambios de estado para una tarea de campaña específica.
+    Requiere autenticación. Un analista normal solo ve el historial de sus propias tareas.
+    """
+    tarea_existente_result = await db.execute(select(models.Tarea).filter(models.Tarea.id == tarea_id))
+    tarea_existente = tarea_existente_result.scalars().first()
+    if not tarea_existente:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada.")
+
+    # Permiso para ver el historial:
+    # Supervisor/Responsable: pueden ver cualquier historial
+    # Analista: solo si la tarea le pertenece
+    if current_analista.role == UserRole.ANALISTA.value and tarea_existente.analista_id != current_analista.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver el historial de esta tarea.")
+
+    result = await db.execute(
+        select(models.HistorialEstadoTarea)
+        .filter(models.HistorialEstadoTarea.tarea_campana_id == tarea_id)
+        .options(selectinload(models.HistorialEstadoTarea.changed_by_analista)) # Cargar el analista que hizo el cambio
+        .order_by(models.HistorialEstadoTarea.timestamp) # Ordenar por fecha para ver la secuencia
+    )
+    historial = result.scalars().unique().all()
+    return historial
+
+# NUEVO ENDPOINT: Obtener historial de estados para una tarea generada por aviso específica
+@app.get("/tareas_generadas_por_avisos/{tarea_id}/historial_estados", response_model=List[HistorialEstadoTarea], summary="Obtener Historial de Estados de una Tarea Generada por Aviso (Protegido)")
+async def get_tarea_generada_historial_estados(
+    tarea_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Obtiene el historial de cambios de estado para una tarea generada por aviso específica.
+    Requiere autenticación. Un analista normal solo ve el historial de sus propias tareas.
+    """
+    tarea_existente_result = await db.execute(select(models.TareaGeneradaPorAviso).filter(models.TareaGeneradaPorAviso.id == tarea_id))
+    tarea_existente = tarea_existente_result.scalars().first()
+    if not tarea_existente:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea generada por aviso no encontrada.")
+
+    # Permiso para ver el historial:
+    # Supervisor/Responsable: pueden ver cualquier historial
+    # Analista: solo si la tarea le pertenece
+    if current_analista.role == UserRole.ANALISTA.value and tarea_existente.analista_asignado_id != current_analista.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver el historial de esta tarea.")
+
+    result = await db.execute(
+        select(models.HistorialEstadoTarea)
+        .filter(models.HistorialEstadoTarea.tarea_generada_id == tarea_id)
+        .options(selectinload(models.HistorialEstadoTarea.changed_by_analista)) # Cargar el analista que hizo el cambio
+        .order_by(models.HistorialEstadoTarea.timestamp) # Ordenar por fecha para ver la secuencia
+    )
+    historial = result.scalars().unique().all()
+    return historial
