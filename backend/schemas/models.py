@@ -49,7 +49,7 @@ class TareaBase(BaseModel):
     descripcion: Optional[str] = None
     fecha_vencimiento: datetime
     progreso: ProgresoTarea
-    analista_id: int
+    analista_id: Optional[int] = None
     campana_id: Optional[int] = None
     fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo para la fecha de finalización
 
@@ -217,11 +217,11 @@ class TareaListOutput(BaseModel):
     descripcion: Optional[str] = None
     fecha_vencimiento: datetime
     progreso: ProgresoTarea
-    analista_id: int
+    analista_id: Optional[int] = None
     campana_id: Optional[int] = None
     fecha_creacion: datetime
     fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo en ListOutput
-    analista: AnalistaSimple
+    analista: Optional[AnalistaSimple] = None
     campana: Optional[CampanaSimple] = None
     class Config:
         from_attributes = True
@@ -326,10 +326,11 @@ class Campana(CampanaBase):
     class Config:
         from_attributes = True
 
+# This class `Tarea` is a subclass of `TareaBase` in Python.
 class Tarea(TareaBase):
     id: int
     fecha_creacion: datetime
-    analista: "AnalistaSimple"
+    analista: Optional[AnalistaSimple] = None
     campana: Optional["CampanaSimple"] = None
     checklist_items: List["ChecklistItemSimple"] = []
     historial_estados: List["HistorialEstadoTareaSimple"] = [] # NUEVO: Relación con historial de estados

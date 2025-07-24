@@ -243,15 +243,21 @@ function FormularioTareaPage() {
               name="analista_id"
               value={formData.analista_id}
               onChange={handleChange}
-              required
-              disabled={user.role === 'ANALISTA'} // Analista solo puede asignarse a sí mismo
+              // 👇 ESTA LÍNEA ES LA CLAVE: El campo solo es requerido si el usuario es un ANALISTA
+              required={user.role === 'ANALISTA'}
+              // El campo está deshabilitado si es un analista (ya que solo puede asignarse a sí mismo)
+              disabled={user.role === 'ANALISTA'}
             >
-              <option value="">Seleccionar Analista</option>
+              {/* Supervisores y Responsables ven esta opción para no asignar */}
+              {(user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
+                <option value="">Sin Asignar (Tarea en Pool)</option>
+              )}
+
+              {/* Si es analista, solo se ve a sí mismo */}
               {user.role === 'ANALISTA' ? (
-                // Si es analista, solo muestra su propio nombre
                 <option key={user.id} value={user.id}>{user.nombre} {user.apellido}</option>
               ) : (
-                // Si es supervisor/responsable, muestra todos los analistas
+                // Si es supervisor/responsable, ve la lista de todos los analistas
                 analistas.map(analista => (
                   <option key={analista.id} value={analista.id}>
                     {analista.nombre} {analista.apellido} ({analista.role})
@@ -259,6 +265,11 @@ function FormularioTareaPage() {
                 ))
               )}
             </Form.Select>
+            {(user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
+                <Form.Text className="text-muted">
+                  Si no asignas un analista, la tarea debe estar asociada a una campaña.
+                </Form.Text>
+            )}
           </Form.Group>
 
           <Form.Group className="mb-3" controlId="campana_id">
