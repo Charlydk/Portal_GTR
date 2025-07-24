@@ -850,93 +850,80 @@ async def crear_tarea(
     current_analista: models.Analista = Depends(get_current_analista)
 ):
     """
-    Crea una nueva tarea en el sistema y la guarda en la base de datos.
-    Requiere autenticación.
-    - Un Analista puede crear tareas para sí mismo:
-        - Si no tienen campana_id (tareas personales).
-        - Si tienen campana_id, el analista debe estar asignado a esa campaña.
-    - Un Supervisor o Responsable pueden crear tareas para cualquier analista y/o campaña.
+    Crea una nueva tarea.
+    - Supervisor/Responsable: Pueden crear tareas asignadas o sin asignar (estas últimas deben tener campaña).
+    - Analista: Solo puede crear tareas para sí mismo y en campañas a las que esté asignado.
     """
-    # Guardar el ID y el rol del analista actual antes de cualquier commit que pueda expirarlo
     current_analista_id = current_analista.id
-    current_analista_role = current_analista.role # También capturar el rol si se usa en lógica posterior
+    current_analista_role_value = current_analista.role.value # Usamos .value para la comparación de strings
 
-    # Validar que el analista_id de la tarea existe
-    analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea.analista_id))
-    analista_existente = analista_result.scalars().first()
-    if not analista_existente:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Analista con ID {tarea.analista_id} no encontrado.")
+    # --- VALIDACIÓN DE EXISTENCIA (MODIFICADA PARA SER OPCIONAL) ---
+    # 1. Si se proporciona un analista, verificar que existe.
+    if tarea.analista_id:
+        analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea.analista_id))
+        if not analista_result.scalars().first():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Analista con ID {tarea.analista_id} no encontrado.")
 
-    # Validar la campaña si se proporciona
+    # 2. Si se proporciona una campaña, verificar que existe.
     if tarea.campana_id:
         campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == tarea.campana_id))
-        campana_existente = campana_result.scalars().first()
-        if not campana_existente:
+        if not campana_result.scalars().first():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Campaña con ID {tarea.campana_id} no encontrada.")
 
-    # Lógica de permisos
-    if current_analista_role == UserRole.ANALISTA.value: # Usar la variable local del rol
-        # Un analista solo puede crear tareas para sí mismo
-        if tarea.analista_id != current_analista_id: # Usar la variable local del ID
+    # --- LÓGICA DE PERMISOS (FUSIONADA) ---
+    # 3. Mantenemos tu lógica original para el rol ANALISTA
+    if current_analista_role_value == UserRole.ANALISTA.value:
+        # Un analista DEBE asignarse la tarea a sí mismo
+        if not tarea.analista_id or tarea.analista_id != current_analista_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Analista solo puede crear tareas para sí mismo.")
         
-        # Si la tarea tiene campana_id, el analista debe estar asignado a esa campaña
+        # Si la tarea tiene campana_id, el analista debe estar asignado a esa campaña (TU LÓGICA ORIGINAL)
         if tarea.campana_id:
-            # Recargar el analista con campanas asignadas si no está ya cargado para esta comprobación
-            # O mejor, hacer una consulta directa para evitar problemas de expiración
             is_assigned_to_campaign_result = await db.execute(
                 select(models.analistas_campanas.c.campana_id)
                 .where(models.analistas_campanas.c.analista_id == current_analista_id)
                 .where(models.analistas_campanas.c.campana_id == tarea.campana_id)
             )
-            is_assigned_to_campaign = is_assigned_to_campaign_result.scalars().first() is not None
-
-            if not is_assigned_to_campaign:
+            if not is_assigned_to_campaign_result.scalars().first():
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear tareas en esta campaña. No estás asignado a ella.")
     
-    # Si es Supervisor o Responsable, no hay restricciones adicionales sobre a quién o qué campaña asignar.
-    # La validación de existencia de analista y campaña ya se hizo arriba.
+    # 4. Agregamos la nueva regla para SUPERVISOR/RESPONSABLE
+    elif current_analista_role_value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
+        # Si crean una tarea sin analista, DEBE tener una campaña.
+        if not tarea.analista_id and not tarea.campana_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Una tarea sin analista asignado debe estar asociada a una campaña.")
 
+    # --- El resto de la función se mantiene igual que la tuya ---
     tarea_data_dict = tarea.model_dump()
-    # CORRECCIÓN: Asegurarse de que la fecha de vencimiento sea timezone-naive
     if tarea_data_dict.get("fecha_vencimiento") is not None:
         tarea_data_dict["fecha_vencimiento"] = tarea_data_dict["fecha_vencimiento"].replace(tzinfo=None)
 
-    db_tarea = models.Tarea(
-        **tarea_data_dict
-    )
+    db_tarea = models.Tarea(**tarea_data_dict)
     db.add(db_tarea)
+    
     try:
         await db.commit()
-        await db.refresh(db_tarea) # Refresh para obtener el ID generado y otros valores por defecto
-        
-        # Capturar el ID y el progreso como escalares después del primer commit y refresh
+        await db.refresh(db_tarea)
         new_tarea_id = db_tarea.id
         new_tarea_progreso = db_tarea.progreso
-        
     except Exception as e:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al crear tarea: {e}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error inesperado al crear tarea: {e}")
 
     # Registrar el estado inicial de la tarea
     historial_entry = models.HistorialEstadoTarea(
-        old_progreso=None, # El primer estado no tiene un estado anterior
-        new_progreso=new_tarea_progreso, # Usar la variable escalar capturada
-        changed_by_analista_id=current_analista_id, # Usar la variable local
-        tarea_campana_id=new_tarea_id # Usar la variable local
+        old_progreso=None,
+        new_progreso=new_tarea_progreso,
+        changed_by_analista_id=current_analista_id,
+        tarea_campana_id=new_tarea_id
     )
     db.add(historial_entry)
+    
     try:
-        await db.commit() # Este commit podría expirar db_tarea nuevamente
+        await db.commit()
     except Exception as e:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al registrar el historial de la tarea: {e}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error al registrar el historial de la tarea: {e}")
 
     result = await db.execute(
         select(models.Tarea)
@@ -944,9 +931,9 @@ async def crear_tarea(
             selectinload(models.Tarea.analista),
             selectinload(models.Tarea.campana),
             selectinload(models.Tarea.checklist_items),
-            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista) # Cargar historial para la respuesta
+            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista)
         )
-        .filter(models.Tarea.id == new_tarea_id) # Usar la variable escalar capturada
+        .filter(models.Tarea.id == new_tarea_id)
     )
     tarea_to_return = result.scalars().first()
     if not tarea_to_return:

@@ -85,7 +85,7 @@ class Tarea(Base):
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     fecha_finalizacion = Column(DateTime, nullable=True) # NUEVO: Fecha en que la tarea se completa/cancela
 
-    analista_id = Column(Integer, ForeignKey("analistas.id"))
+    analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=True)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=True)
 
     # Relaciones
