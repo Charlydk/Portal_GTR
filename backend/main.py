@@ -1022,16 +1022,38 @@ async def actualizar_tarea(
     update_data = tarea_update.model_dump(exclude_unset=True)
     old_progreso = tarea_existente.progreso
 
-    # --- 👇 LA CORRECCIÓN FINAL Y DEFINITIVA ESTÁ AQUÍ ---
-    # Comparamos los valores de texto (.value) para ser 100% seguros
+# --- 👇 PEGA ESTE NUEVO BLOQUE COMPLETO 👇 ---
     if current_analista.role.value == UserRole.ANALISTA.value:
-        if tarea_existente.analista_id != current_analista.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un Analista solo puede actualizar sus propias tareas.")
-        
-        if "progreso" in update_data:
-            tarea_existente.progreso = update_data["progreso"]
-        if "descripcion" in update_data:
-            tarea_existente.descripcion = update_data["descripcion"]
+        is_owner = tarea_existente.analista_id == current_analista.id
+        is_unassigned = tarea_existente.analista_id is None
+
+        # Caso 1: Analista está tomando una tarea del pool
+        if is_unassigned and "analista_id" in update_data and update_data["analista_id"] == current_analista.id:
+            tarea_existente.analista_id = current_analista.id
+            # Opcional: Cambiar automáticamente el progreso a "EN PROGRESO"
+            if tarea_existente.progreso == ProgresoTarea.PENDIENTE.value:
+                tarea_existente.progreso = ProgresoTarea.EN_PROGRESO.value
+
+        # Caso 2: Analista es dueño de la tarea y la está actualizando o liberando
+        elif is_owner:
+            # Subcaso 2.1: Liberando la tarea
+            if "analista_id" in update_data and update_data["analista_id"] is None:
+                tarea_existente.analista_id = None
+                tarea_existente.progreso = ProgresoTarea.PENDIENTE.value # Revertir a pendiente
+
+            # Subcaso 2.2: Actualizando el progreso (si no la está liberando)
+            elif "progreso" in update_data:
+                tarea_existente.progreso = update_data["progreso"]
+
+            # Siempre puede actualizar la descripción
+            if "descripcion" in update_data:
+                tarea_existente.descripcion = update_data["descripcion"]
+
+        # Caso 3: Intento no permitido
+        else:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para modificar esta tarea.")
+    # --- 👆 FIN DEL NUEVO BLOQUE 👆 ---
+
 
     elif current_analista.role.value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
         for key, value in update_data.items():
@@ -1041,7 +1063,7 @@ async def actualizar_tarea(
                 setattr(tarea_existente, key, value)
     # --- 👆 FIN DE LA CORRECCIÓN ---
 
-    if "progreso" in update_data and tarea_existente.progreso != old_progreso:
+    if tarea_existente.progreso != old_progreso:
         historial_entry = models.HistorialEstadoTarea(
             old_progreso=old_progreso,
             new_progreso=tarea_existente.progreso,
