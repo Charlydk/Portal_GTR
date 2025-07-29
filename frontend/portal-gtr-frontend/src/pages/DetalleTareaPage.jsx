@@ -159,6 +159,85 @@ function DetalleTareaPage() {
     }
   };
 
+  const handleTomarTarea = async () => {
+    if (!authToken || !user || !tarea || submittingProgress) return;
+
+    setSubmittingProgress(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/tareas/${tarea.id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`,
+            },
+            // Nos asignamos la tarea a nosotros mismos
+            body: JSON.stringify({ analista_id: user.id }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || "Error al asignarse la tarea.");
+        }
+
+        // Actualizamos la tarea en el estado local para que se refleje inmediatamente
+        const updatedTarea = await response.json();
+        setTarea(updatedTarea);
+        setSuccess("¡Tarea asignada con éxito!");
+        setTimeout(() => setSuccess(null), 3000);
+
+    } catch (err) {
+        console.error("Error al tomar la tarea:", err);
+        setError(err.message);
+        setTimeout(() => setError(null), 5000);
+    } finally {
+        setSubmittingProgress(false);
+    }
+};
+
+const handleDejarTarea = async () => {
+  if (!authToken || !user || !tarea || submittingProgress) return;
+
+  if (!window.confirm('¿Estás seguro de que quieres liberar esta tarea? Volverá al pool de la campaña.')) {
+      return;
+  }
+
+  setSubmittingProgress(true);
+  setError(null);
+  setSuccess(null);
+
+  try {
+      const response = await fetch(`${API_BASE_URL}/tareas/${tarea.id}`, {
+          method: 'PUT',
+          headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`,
+          },
+          // Enviamos null para desasignar
+          body: JSON.stringify({ analista_id: null }),
+      });
+
+      if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || "Error al liberar la tarea.");
+      }
+
+      const updatedTarea = await response.json();
+      setTarea(updatedTarea);
+      setSuccess("¡Tarea liberada con éxito!");
+      setTimeout(() => setSuccess(null), 3000);
+
+  } catch (err) {
+      console.error("Error al dejar la tarea:", err);
+      setError(err.message);
+      setTimeout(() => setError(null), 5000);
+  } finally {
+      setSubmittingProgress(false);
+  }
+};
+
   const handleDeleteTarea = async () => {
     if (!authToken || !user || !tarea) return;
 
@@ -402,6 +481,31 @@ function DetalleTareaPage() {
           )}
 
           {/* ✅ CORRECCIÓN 2: BOTÓN AÑADIDO AL GRUPO DE ACCIONES */}
+          {user.role === 'ANALISTA' && !tarea.analista && isAssignedToCampaign && (
+          <div className="d-grid gap-2 mb-3">
+              <Button
+                  variant="success"
+                  onClick={handleTomarTarea}
+                  disabled={submittingProgress}
+              >
+                  {submittingProgress ? 'Asignando...' : 'Tomar Tarea'}
+              </Button>
+          </div>
+            )}
+
+          {user.role === 'ANALISTA' && tarea.analista?.id === user.id && !esTareaFinalizada && (
+          <div className="d-grid gap-2 mb-3">
+            <Button
+                variant="warning"
+                onClick={handleDejarTarea}
+                disabled={submittingProgress}
+            >
+                {submittingProgress ? 'Liberando...' : 'Liberar Tarea'}
+            </Button>
+          </div>
+            )} 
+          
+          
           <div className="d-grid gap-2 mt-4">
             {canEditTask && (
               <Button variant="secondary" onClick={() => navigate(`/tareas/editar/${tarea.id}`)}>
