@@ -222,6 +222,33 @@ async def read_users_me(current_analista: models.Analista = Depends(get_current_
     return current_analista
 
 
+@app.get("/campanas/tareas_disponibles/", response_model=List[TareaListOutput], summary="Obtener Tareas de Campaña sin Asignar (Protegido)")
+async def obtener_tareas_disponibles(
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Obtiene las tareas de las campañas a las que el analista está asignado,
+    pero que aún no tienen un analista asignado (analista_id es NULL).
+    """
+    # Obtener los IDs de las campañas asignadas al analista actual
+    assigned_campaign_ids = [c.id for c in current_analista.campanas_asignadas]
+
+    if not assigned_campaign_ids:
+        return [] # Si no tiene campañas, no hay tareas disponibles
+
+    query = select(models.Tarea).options(
+        selectinload(models.Tarea.analista),
+        selectinload(models.Tarea.campana)
+    ).where(
+        models.Tarea.campana_id.in_(assigned_campaign_ids),
+        models.Tarea.analista_id.is_(None) # La condición clave: tareas sin analista
+    )
+
+    tareas = await db.execute(query)
+    return tareas.scalars().unique().all()
+
+
 # --- Endpoints para Analistas (Protegidos) ---
 
 @app.post("/analistas/", response_model=Analista, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Analista (Protegido por Supervisor/Responsable)")

@@ -3,16 +3,21 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Container, Row, Col, Card, Spinner, Alert, ListGroup, Button, Badge } from 'react-bootstrap';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 function DashboardPage() {
   const { user, authToken, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [dashboardData, setDashboardData] = useState(null);
+  
+  const [campanasAsignadas, setCampanasAsignadas] = useState([]);
   const [avisosPendientes, setAvisosPendientes] = useState([]);
-  const [tareasGeneradas, setTareasGeneradas] = useState([]);
+  
+  const [misTareasActivas, setMisTareasActivas] = useState([]);
+  const [tareasDisponibles, setTareasDisponibles] = useState([]);
+
   const [successMessage, setSuccessMessage] = useState(null);
 
   const fetchDashboardData = useCallback(async () => {
@@ -23,65 +28,38 @@ function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/users/me/`, {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || `Error al cargar datos del dashboard: ${response.statusText}`);
-      }
-      const data = await response.json();
-      setDashboardData(data);
+      const [
+        userMeRes,
+        allAvisosRes,
+        acusesReciboRes,
+        tareasDisponiblesRes,
+      ] = await Promise.all([
+        fetch(`${API_BASE_URL}/users/me/`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+        fetch(`${API_BASE_URL}/avisos/`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+        fetch(`${API_BASE_URL}/analistas/${user.id}/acuses_recibo_avisos`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+        fetch(`${API_BASE_URL}/campanas/tareas_disponibles/`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+      ]);
 
-      // Filtrar avisos pendientes de acusar recibo
-      const allAvisosResponse = await fetch(`${API_BASE_URL}/avisos/`, {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-      });
-      if (!allAvisosResponse.ok) {
-        const errorData = await allAvisosResponse.json();
-        throw new Error(errorData.detail || `Error al cargar todos los avisos: ${allAvisosResponse.statusText}`);
-      }
-      const allAvisos = await allAvisosResponse.json();
-
-      const acusesReciboResponse = await fetch(`${API_BASE_URL}/analistas/${user.id}/acuses_recibo_avisos`, {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-      });
-      if (!acusesReciboResponse.ok) {
-        const errorData = await acusesReciboResponse.json();
-        throw new Error(errorData.detail || `Error al cargar acuses de recibo: ${acusesReciboResponse.statusText}`);
-      }
-      const acusesRecibo = await acusesReciboResponse.json();
+      if (!userMeRes.ok) throw new Error('Error al cargar datos del usuario.');
+      const userMeData = await userMeRes.json();
+      setCampanasAsignadas(userMeData.campanas_asignadas || []);
       
-      // --- CORRECCIÓN DEL FILTRO DE AVISOS PENDIENTES ---
-      // Acceder a 'ar.aviso.id' en lugar de 'ar.aviso_id'
-      const acusadosIds = new Set(acusesRecibo.map(ar => ar.aviso.id)); 
+      // Añadimos una propiedad 'type' para diferenciar las tareas
+      const tareasDeCampana = (userMeData.tareas || []).map(t => ({ ...t, type: 'campaign' }));
+      const tareasGeneradas = (userMeData.tareas_generadas_por_avisos || []).map(t => ({ ...t, type: 'generated' }));
+
+      const todasMisTareas = [...tareasDeCampana, ...tareasGeneradas].sort((a, b) => new Date(b.fecha_creacion) - new Date(a.fecha_creacion));
+      setMisTareasActivas(todasMisTareas);
+
+      if (!allAvisosRes.ok) throw new Error('Error al cargar avisos.');
+      if (!acusesReciboRes.ok) throw new Error('Error al cargar acuses de recibo.');
+      const allAvisos = await allAvisosRes.json();
+      const acusesRecibo = await acusesReciboRes.json();
+      const acusadosIds = new Set(acusesRecibo.map(ar => ar.aviso.id));
+      setAvisosPendientes(allAvisos.filter(aviso => !acusadosIds.has(aviso.id)));
       
-      console.log("Todos los Avisos (allAvisos):", allAvisos);
-      console.log("Acuses de Recibo del Analista (acusesRecibo):", acusesRecibo);
-      console.log("IDs de Avisos Acusados (acusadosIds Set FINAL):", acusadosIds);
-
-      const pendientes = allAvisos.filter(aviso => !acusadosIds.has(aviso.id));
-      setAvisosPendientes(pendientes);
-      // --- FIN CORRECCIÓN DEL FILTRO ---
-
-      // Cargar tareas generadas por avisos para el analista actual
-      const tareasGeneradasResponse = await fetch(`${API_BASE_URL}/tareas_generadas_por_avisos/?analista_id=${user.id}`, {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-      });
-      if (!tareasGeneradasResponse.ok) {
-        const errorData = await tareasGeneradasResponse.json();
-        throw new Error(errorData.detail || `Error al cargar tareas generadas por avisos: ${tareasGeneradasResponse.statusText}`);
-      }
-      const tareasGenData = await tareasGeneradasResponse.json();
-      setTareasGeneradas(tareasGenData);
+      if (!tareasDisponiblesRes.ok) throw new Error('Error al cargar tareas disponibles.');
+      setTareasDisponibles(await tareasDisponiblesRes.json());
 
     } catch (err) {
       console.error("Error fetching dashboard data:", err);
@@ -118,7 +96,7 @@ function DashboardPage() {
       }
 
       setSuccessMessage("Acuse de recibo registrado con éxito y tarea generada si aplica!");
-      fetchDashboardData(); // Recargar datos del dashboard para actualizar avisos y tareas
+      fetchDashboardData();
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err) {
       console.error("Error al acusar recibo:", err);
@@ -130,15 +108,13 @@ function DashboardPage() {
   const formatDateTime = (isoString) => {
     if (!isoString) return 'N/A';
     const date = new Date(isoString);
-    return date.toLocaleString(); // Formato legible local
+    return date.toLocaleString('es-AR');
   };
 
   if (authLoading || loading) {
     return (
-      <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
-        <Spinner animation="border" role="status">
-          <span className="visually-hidden">Cargando Dashboard...</span>
-        </Spinner>
+      <Container className="d-flex justify-content-center align-items-center min-vh-100">
+        <Spinner animation="border" role="status" />
         <p className="ms-3 text-muted">Cargando datos del dashboard...</p>
       </Container>
     );
@@ -156,7 +132,7 @@ function DashboardPage() {
     );
   }
 
-  if (!user || !dashboardData) {
+  if (!user) {
     return (
       <Container className="mt-4">
         <Alert variant="warning">
@@ -172,50 +148,26 @@ function DashboardPage() {
     <Container className="py-5">
       <h1 className="mb-4 text-center text-primary">Dashboard de {user.role}</h1>
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
-      {error && <Alert variant="danger">{error}</Alert>}
-
+      
       <Row className="mb-4">
-        <Col md={6}>
+        <Col>
           <Card className="shadow-sm h-100">
             <Card.Body>
-              <Card.Title className="text-secondary">Información del Usuario</Card.Title>
-              <ListGroup variant="flush">
-                <ListGroup.Item><strong>Nombre:</strong> {dashboardData.nombre} {dashboardData.apellido}</ListGroup.Item>
-                <ListGroup.Item><strong>Email:</strong> {dashboardData.email}</ListGroup.Item>
-                <ListGroup.Item><strong>BMS ID:</strong> {dashboardData.bms_id}</ListGroup.Item>
-                <ListGroup.Item><strong>Rol:</strong> <Badge bg="info">{dashboardData.role}</Badge></ListGroup.Item>
-                <ListGroup.Item><strong>Activo:</strong> {dashboardData.esta_activo ? 'Sí' : 'No'}</ListGroup.Item>
-              </ListGroup>
-            </Card.Body>
-          </Card>
-        </Col>
-        <Col md={6}>
-          <Card className="shadow-sm h-100">
-            <Card.Body>
-              <Card.Title className="text-secondary">Campañas Asignadas</Card.Title>
-              {dashboardData.campanas_asignadas && dashboardData.campanas_asignadas.length > 0 ? (
+              <Card.Title className="text-secondary">Mis Campañas Asignadas</Card.Title>
+              {campanasAsignadas.length > 0 ? (
                 <ListGroup variant="flush">
-                  {dashboardData.campanas_asignadas.map(campana => (
+                  {campanasAsignadas.map(campana => (
                     <ListGroup.Item key={campana.id}>
-                      <a href={`/campanas/${campana.id}`} className="text-decoration-none">
-                        {campana.nombre}
-                      </a>
-                      <br />
-                      <small className="text-muted">
-                        Inicio: {formatDateTime(campana.fecha_inicio)} | Fin: {formatDateTime(campana.fecha_fin)}
-                      </small>
+                      <Link to={`/campanas/${campana.id}`} className="text-decoration-none">{campana.nombre}</Link>
                     </ListGroup.Item>
                   ))}
                 </ListGroup>
-              ) : (
-                <Alert variant="info">No tienes campañas asignadas.</Alert>
-              )}
+              ) : ( <Alert variant="info">No tienes campañas asignadas.</Alert> )}
             </Card.Body>
           </Card>
         </Col>
       </Row>
 
-      {/* Sección para Avisos Pendientes de Acusar Recibo */}
       <Row className="mb-4">
         <Col>
           <Card className="shadow-sm">
@@ -224,104 +176,73 @@ function DashboardPage() {
               {avisosPendientes.length > 0 ? (
                 <ListGroup variant="flush">
                   {avisosPendientes.map(aviso => (
-                    <ListGroup.Item key={aviso.id} className="d-flex justify-content-between align-items-center">
+                    <ListGroup.Item key={aviso.id} className="d-flex justify-content-between align-items-center flex-wrap">
                       <div>
                         <strong>{aviso.titulo}</strong>
-                        <p className="mb-1 text-muted">{aviso.contenido}</p>
+                        <p className="mb-1 text-muted small">{aviso.contenido}</p>
                         <small>Creador: {aviso.creador?.nombre} {aviso.creador?.apellido} | Campaña: {aviso.campana?.nombre || 'General'}</small>
                         {aviso.requiere_tarea && (
                           <div className="mt-1">
                             <Badge bg="warning" text="dark">Requiere Tarea</Badge>
-                            {aviso.fecha_vencimiento_tarea && (
-                              <small className="ms-2 text-danger">Vence Tarea: {formatDateTime(aviso.fecha_vencimiento_tarea)}</small>
-                            )}
                           </div>
                         )}
                       </div>
-                      <Button
-                        variant="success"
-                        size="sm"
-                        onClick={() => handleAcuseRecibo(aviso.id)}
-                      >
+                      <Button variant="success" size="sm" onClick={() => handleAcuseRecibo(aviso.id)}>
                         Acusar Recibo
                       </Button>
                     </ListGroup.Item>
                   ))}
                 </ListGroup>
-              ) : (
-                <Alert variant="success">No tienes avisos pendientes de acusar recibo.</Alert>
-              )}
+              ) : ( <Alert variant="success">No tienes avisos pendientes de acusar recibo.</Alert> )}
             </Card.Body>
           </Card>
         </Col>
       </Row>
 
-      {/* Sección para Tareas Generadas por Avisos */}
-      <Row className="mb-4">
-        <Col>
-          <Card className="shadow-sm">
-            <Card.Body>
-              <Card.Title className="text-secondary">Mis Tareas Generadas por Avisos</Card.Title>
-              {tareasGeneradas.length > 0 ? (
-                <ListGroup variant="flush">
-                  {tareasGeneradas.map(tarea => (
-                    <ListGroup.Item key={tarea.id} className="d-flex justify-content-between align-items-center">
-                      <div>
-                        <strong>{tarea.titulo}</strong>
-                        <p className="mb-1 text-muted">{tarea.descripcion}</p>
-                        <small>
-                          Estado: <Badge bg={tarea.progreso === 'PENDIENTE' ? 'danger' : 'success'}>{tarea.progreso}</Badge>
-                          {tarea.fecha_vencimiento && (
-                            <span className="ms-2 text-danger">Vence: {formatDateTime(tarea.fecha_vencimiento)}</span>
-                          )}
-                        </small>
-                      </div>
-                      <Button
-                        variant="outline-primary"
-                        size="sm"
-                        onClick={() => navigate(`/tareas-generadas/${tarea.id}`)}
-                      >
-                        Ver/Gestionar
-                      </Button>
-                    </ListGroup.Item>
-                  ))}
-                </ListGroup>
-              ) : (
-                <Alert variant="info">No tienes tareas generadas por avisos pendientes.</Alert>
-              )}
-            </Card.Body>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Sección para Tareas de Campaña (ya existente) */}
       <Row>
-        <Col>
-          <Card className="shadow-sm">
+        <Col md={6} className="mb-4">
+          <Card className="shadow-sm h-100">
             <Card.Body>
-              <Card.Title className="text-secondary">Mis Tareas de Campaña</Card.Title>
-              {dashboardData.tareas && dashboardData.tareas.length > 0 ? (
+              <Card.Title className="text-secondary">Mis Tareas Activas</Card.Title>
+              {misTareasActivas.length > 0 ? (
                 <ListGroup variant="flush">
-                  {dashboardData.tareas.map(tarea => (
-                    <ListGroup.Item key={tarea.id} className="d-flex justify-content-between align-items-center">
-                      <div>
+                  {misTareasActivas.map(tarea => (
+                    <ListGroup.Item key={`${tarea.type}-${tarea.id}`}>
+                      <Link to={tarea.type === 'campaign' ? `/tareas/${tarea.id}` : `/tareas-generadas/${tarea.id}`} className="text-decoration-none d-block">
                         <strong>{tarea.titulo}</strong>
-                        <p className="mb-1 text-muted">Progreso: <Badge bg={tarea.progreso === 'PENDIENTE' ? 'warning' : 'info'}>{tarea.progreso}</Badge></p>
-                        <small>Vencimiento: {formatDateTime(tarea.fecha_vencimiento)}</small>
-                      </div>
-                      <Button
-                        variant="outline-primary"
-                        size="sm"
-                        onClick={() => navigate(`/tareas/${tarea.id}`)}
-                      >
-                        Ver Detalles
-                      </Button>
+                        <div>
+                          <Badge bg={tarea.type === 'campaign' ? 'primary' : 'info'}>
+                            {tarea.type === 'campaign' ? 'Campaña' : 'Aviso'}
+                          </Badge>
+                          <small className="ms-2 text-muted">Vence: {formatDateTime(tarea.fecha_vencimiento)}</small>
+                        </div>
+                      </Link>
                     </ListGroup.Item>
                   ))}
                 </ListGroup>
-              ) : (
-                <Alert variant="info">No tienes tareas de campaña asignadas.</Alert>
-              )}
+              ) : ( <Alert variant="info">No tienes tareas activas.</Alert> )}
+            </Card.Body>
+          </Card>
+        </Col>
+
+        <Col md={6} className="mb-4">
+          <Card className="shadow-sm h-100">
+            <Card.Body>
+              <Card.Title className="text-secondary">Tareas de Campaña Disponibles</Card.Title>
+              {tareasDisponibles.length > 0 ? (
+                <ListGroup variant="flush">
+                  {tareasDisponibles.map(tarea => (
+                    <ListGroup.Item key={tarea.id}>
+                      <Link to={`/tareas/${tarea.id}`} className="text-decoration-none d-block">
+                        <strong>{tarea.titulo}</strong>
+                        <div>
+                          <small className="text-muted">Campaña: {tarea.campana.nombre}</small>
+                        </div>
+                      </Link>
+                    </ListGroup.Item>
+                  ))}
+                </ListGroup>
+              ) : ( <Alert variant="success">¡No hay tareas pendientes en tus campañas!</Alert> )}
             </Card.Body>
           </Card>
         </Col>
