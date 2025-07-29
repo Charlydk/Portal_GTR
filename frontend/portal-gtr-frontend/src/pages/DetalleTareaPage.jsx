@@ -236,10 +236,17 @@ function DetalleTareaPage() {
   }
 
   // Permisos para ver la tarea (ya manejado por el backend, pero buena práctica en frontend)
+  // Verificamos si el analista está asignado a la campaña a la que pertenece la tarea
+  const isAssignedToCampaign = user && 
+  user.campanas_asignadas && 
+  user.campanas_asignadas.some(c => c.id === tarea.campana_id);
+
+  // Permisos para ver la tarea
   const canViewTask = user && (
-    user.role === 'SUPERVISOR' || 
-    user.role === 'RESPONSABLE' || 
-    (user.role === 'ANALISTA' && tarea.analista_id === user.id)
+  user.role === 'SUPERVISOR' || 
+  user.role === 'RESPONSABLE' || 
+  // Un analista puede ver si la tarea es suya O si pertenece a una de sus campañas
+  (user.role === 'ANALISTA' && (tarea.analista_id === user.id || isAssignedToCampaign))
   );
 
   // Permisos para editar la tarea (incluye progreso y descripción)
@@ -260,7 +267,7 @@ function DetalleTareaPage() {
   );
 
   // Permisos para editar checklist items de esta tarea (solo Analista si es su tarea, o Supervisor/Responsable)
-  const canEditChecklistItem = (checklistItem) => user && (
+  const canEditChecklistItem = ( ) => user && (
     user.role === 'SUPERVISOR' ||
     user.role === 'RESPONSABLE' ||
     (user.role === 'ANALISTA' && tarea.analista_id === user.id)
