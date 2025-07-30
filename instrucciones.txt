@@ -1,3 +1,36 @@
+
+para inciar en casa:
+
+BACKEND
+Navega a la carpeta backend de tu proyecto:
+
+
+cd RUTA/A/TU/PROYECTO/PORTAL_GTR/backend
+Activa el entorno virtual. Este paso es muy importante:
+
+.\venv\Scripts\activate
+(Deberías ver (venv) al principio de la línea de la terminal).
+
+Inicia el servidor con Uvicorn:
+
+uvicorn main:app --reload --port 8001
+
+
+FRONTEND
+
+Navega a la carpeta del frontend:
+
+
+
+cd RUTA/A/TU/PROYECTO/PORTAL_GTR/frontend/portal-gtr-frontend
+Inicia el servidor de desarrollo de Vite:
+
+npm run dev
+
+=====================/===============================
+
+
+Para iniciar en pc con node portable
 iniciar backend
 uvicorn main:app --reload --port 8001
 

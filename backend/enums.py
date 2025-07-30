@@ -13,7 +13,6 @@ class ProgresoTarea(str, Enum):
     CANCELADA = "CANCELADA"
 
 class TipoIncidencia(str, Enum):
-    ERROR = "ERROR"
-    CONSULTA = "CONSULTA"
-    MEJORA = "MEJORA"
+    TECNICA = "TECNICA"
+    OPERATIVA = "OPERATIVA"
     OTRO = "OTRO"
