@@ -1,26 +1,12 @@
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime, date, time
 from typing import List, Optional
-from enums import UserRole, ProgresoTarea, TipoIncidencia # <-- AÑADE ESTA LÍNEA
+# --- CORRECCIÓN 1: Nos aseguramos de importar los Enums correctos desde enums.py ---
+from enums import UserRole, ProgresoTarea, TipoIncidencia
 from enum import Enum
 
-# --- Enums ---
-class UserRole(str, Enum):
-    ANALISTA = "ANALISTA"
-    SUPERVISOR = "SUPERVISOR"
-    RESPONSABLE = "RESPONSABLE"
-
-class ProgresoTarea(str, Enum):
-    PENDIENTE = "PENDIENTE"
-    EN_PROGRESO = "EN_PROGRESO"
-    COMPLETADA = "COMPLETADA"
-    CANCELADA = "CANCELADA"
-
-class TipoIncidencia(str, Enum):
-    ERROR = "ERROR"
-    CONSULTA = "CONSULTA"
-    MEJORA = "MEJORA"
-    OTRO = "OTRO"
+# --- CORRECCIÓN 2: Eliminamos las declaraciones de Enum duplicadas de este archivo ---
+# Ahora Pydantic usará las definiciones importadas de enums.py como la única fuente de verdad.
 
 # --- Schemas Base (para creación y actualización) ---
 
@@ -51,7 +37,7 @@ class TareaBase(BaseModel):
     progreso: ProgresoTarea
     analista_id: Optional[int] = None
     campana_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo para la fecha de finalización
+    fecha_finalizacion: Optional[datetime] = None
 
 class TareaUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -60,7 +46,7 @@ class TareaUpdate(BaseModel):
     progreso: Optional[ProgresoTarea] = None
     analista_id: Optional[int] = None
     campana_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo para la fecha de finalización (puede ser None para resetear)
+    fecha_finalizacion: Optional[datetime] = None
 
 class ChecklistItemBase(BaseModel):
     tarea_id: int
@@ -89,7 +75,6 @@ class AvisoBase(BaseModel):
 class AcuseReciboCreate(BaseModel):
     analista_id: int
 
-# --- ESQUEMAS DE BITÁCORA (Base y Update) ---
 class BitacoraEntryBase(BaseModel):
     campana_id: int
     fecha: date
@@ -114,7 +99,6 @@ class BitacoraGeneralCommentBase(BaseModel):
 class BitacoraGeneralCommentUpdate(BaseModel):
     comentario: Optional[str] = None
 
-# --- NUEVOS ESQUEMAS PARA TAREAS GENERADAS POR AVISOS ---
 class TareaGeneradaPorAvisoBase(BaseModel):
     titulo: str
     descripcion: Optional[str] = None
@@ -122,7 +106,7 @@ class TareaGeneradaPorAvisoBase(BaseModel):
     progreso: ProgresoTarea = ProgresoTarea.PENDIENTE
     analista_asignado_id: int
     aviso_origen_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo para la fecha de finalización
+    fecha_finalizacion: Optional[datetime] = None
 
 class TareaGeneradaPorAvisoUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -131,9 +115,8 @@ class TareaGeneradaPorAvisoUpdate(BaseModel):
     progreso: Optional[ProgresoTarea] = None
     analista_asignado_id: Optional[int] = None
     aviso_origen_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo para la fecha de finalización (puede ser None para resetear)
+    fecha_finalizacion: Optional[datetime] = None
 
-# NUEVO ESQUEMA BASE PARA HISTORIAL DE ESTADOS DE TAREAS
 class HistorialEstadoTareaBase(BaseModel):
     old_progreso: Optional[ProgresoTarea] = None
     new_progreso: ProgresoTarea
@@ -182,21 +165,19 @@ class TareaSimple(BaseModel):
     titulo: str
     progreso: ProgresoTarea
     fecha_vencimiento: datetime
-    fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo en Simple
+    fecha_finalizacion: Optional[datetime] = None
     class Config:
         from_attributes = True
 
-# Nuevo esquema simple para TareaGeneradaPorAviso
 class TareaGeneradaPorAvisoSimple(BaseModel):
     id: int
     titulo: str
     progreso: ProgresoTarea
     fecha_vencimiento: Optional[datetime] = None
-    fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo en Simple
+    fecha_finalizacion: Optional[datetime] = None
     class Config:
         from_attributes = True
 
-# NUEVO ESQUEMA SIMPLE PARA HISTORIAL DE ESTADOS DE TAREAS
 class HistorialEstadoTareaSimple(BaseModel):
     id: int
     old_progreso: Optional[ProgresoTarea] = None
@@ -205,8 +186,6 @@ class HistorialEstadoTareaSimple(BaseModel):
     changed_by_analista_id: int
     tarea_campana_id: Optional[int] = None
     tarea_generada_id: Optional[int] = None
-    # No incluimos la relación 'changed_by_analista' aquí para evitar recursión en Simple
-
     class Config:
         from_attributes = True
 
@@ -220,7 +199,7 @@ class TareaListOutput(BaseModel):
     analista_id: Optional[int] = None
     campana_id: Optional[int] = None
     fecha_creacion: datetime
-    fecha_finalizacion: Optional[datetime] = None # NUEVO: Campo en ListOutput
+    fecha_finalizacion: Optional[datetime] = None
     analista: Optional[AnalistaSimple] = None
     campana: Optional[CampanaSimple] = None
     class Config:
@@ -326,14 +305,13 @@ class Campana(CampanaBase):
     class Config:
         from_attributes = True
 
-# This class `Tarea` is a subclass of `TareaBase` in Python.
 class Tarea(TareaBase):
     id: int
     fecha_creacion: datetime
     analista: Optional[AnalistaSimple] = None
     campana: Optional["CampanaSimple"] = None
     checklist_items: List["ChecklistItemSimple"] = []
-    historial_estados: List["HistorialEstadoTareaSimple"] = [] # NUEVO: Relación con historial de estados
+    historial_estados: List["HistorialEstadoTareaSimple"] = []
     class Config:
         from_attributes = True
 
@@ -343,7 +321,7 @@ class TareaGeneradaPorAviso(TareaGeneradaPorAvisoBase):
     progreso: ProgresoTarea
     analista_asignado: "AnalistaSimple"
     aviso_origen: Optional["AvisoSimple"] = None
-    historial_estados: List["HistorialEstadoTareaSimple"] = [] # NUEVO: Relación con historial de estados
+    historial_estados: List["HistorialEstadoTareaSimple"] = []
     class Config:
         from_attributes = True
 
@@ -396,12 +374,10 @@ class BitacoraGeneralComment(BitacoraGeneralCommentBase):
     class Config:
         from_attributes = True
 
-# NUEVO ESQUEMA COMPLETO PARA HISTORIAL DE ESTADOS DE TAREAS
 class HistorialEstadoTarea(HistorialEstadoTareaBase):
     id: int
     timestamp: datetime
-    changed_by_analista: AnalistaSimple # Relación con el analista que hizo el cambio
-    # No incluimos las relaciones a Tarea/TareaGenerada para evitar recursión infinita en el esquema completo
+    changed_by_analista: AnalistaSimple
     class Config:
         from_attributes = True
 

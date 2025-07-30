@@ -4,19 +4,16 @@ import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { Form, Button, Alert, Spinner, Card } from 'react-bootstrap';
 
-// Este componente ahora es un formulario reutilizable, no una página completa.
-// Recibe campanaId, y callbacks para éxito y error.
 const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
   const { user, authToken } = useAuth();
 
   const [comentario, setComentario] = useState('');
   const [horario, setHorario] = useState('');
-  const [tipoIncidencia, setTipoIncidencia] = useState('tecnica');
+  const [tipoIncidencia, setTipoIncidencia] = useState('TECNICA'); 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState(null);
   const [formSuccess, setFormSuccess] = useState(null);
 
-  // Función para generar las opciones de horario (cada 30 minutos)
   const generarOpcionesHorario = () => {
     const opciones = [];
     for (let h = 0; h < 24; h++) {
@@ -29,7 +26,6 @@ const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
     return opciones;
   };
 
-  // Manejador del envío del formulario
   const handleSubmit = async (e) => {
     e.preventDefault();
     setFormError(null);
@@ -47,22 +43,18 @@ const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
       return;
     }
 
-    // Obtener la fecha actual en formato YYYY-MM-DD
     const today = new Date();
-    const formattedDate = today.toISOString().split('T')[0]; // "YYYY-MM-DD"
+    const formattedDate = today.toISOString().split('T')[0];
 
     const newBitacoraEntry = {
       campana_id: campanaId,
       fecha: formattedDate,
       hora: horario,
-      comentario: comentario, // El comentario general de la bitácora
-      es_incidencia: true, // ¡Marcamos esta entrada como una incidencia!
+      comentario: null,
+      es_incidencia: true,
       tipo_incidencia: tipoIncidencia,
-      comentario_incidencia: comentario, // Usamos el mismo comentario para la incidencia por simplicidad
-                                        // Podrías tener un campo separado si la incidencia requiere un comentario distinto
+      comentario_incidencia: comentario,
     };
-
-    console.log('Datos de la entrada de bitácora (incidencia) a enviar:', newBitacoraEntry);
 
     try {
       const response = await fetch(`${API_BASE_URL}/bitacora_entries/`, {
@@ -80,15 +72,11 @@ const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
       }
 
       const data = await response.json();
-      console.log('Incidencia registrada con éxito como entrada de bitácora:', data);
       setFormSuccess('Incidencia registrada con éxito!');
-
-      // Limpiar formulario
       setComentario('');
       setHorario('');
-      setTipoIncidencia('tecnica');
+      setTipoIncidencia('TECNICA');
 
-      // Llamar al callback de éxito si se proporciona
       if (onSuccess) {
         onSuccess(data);
       }
@@ -96,13 +84,11 @@ const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
     } catch (err) {
       console.error('Error al registrar incidencia:', err);
       setFormError(err.message || 'Hubo un error al registrar la incidencia.');
-      // Llamar al callback de error si se proporciona
       if (onError) {
         onError(err);
       }
     } finally {
       setIsSubmitting(false);
-      // Limpiar mensajes de éxito/error después de un tiempo
       setTimeout(() => { setFormError(null); setFormSuccess(null); }, 5000);
     }
   };
@@ -116,7 +102,7 @@ const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
 
       <Form onSubmit={handleSubmit}>
         <Form.Group className="mb-3">
-          <Form.Label htmlFor="comentario">Comentario Breve de la Incidencia:</Form.Label>
+          <Form.Label htmlFor="comentario">Comentario de la Incidencia:</Form.Label>
           <Form.Control
             as="textarea"
             id="comentario"
@@ -153,19 +139,19 @@ const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
             required
             disabled={isSubmitting}
           >
-            <option value="tecnica">Técnica</option>
-            <option value="operativa">Operativa</option>
-            <option value="otra">Otra</option>
+            <option value="TECNICA">Tecnica</option>
+            <option value="OPERATIVA">Operativa</option>
+            <option value="OTRO">Otros</option>
           </Form.Select>
         </Form.Group>
 
         <Button
           type="submit"
-          variant="danger" // Usamos danger para incidencias, para destacarlas
+          variant="danger"
           className="w-100 mt-3"
           disabled={isSubmitting}
         >
-          {isSubmitting ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Registrar Incidencia'}
+          {isSubmitting ? <Spinner as="span" animation="border" size="sm" /> : 'Registrar Incidencia'}
         </Button>
       </Form>
     </Card>

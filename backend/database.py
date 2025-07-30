@@ -18,13 +18,12 @@ if not DATABASE_URL:
 engine = create_async_engine(DATABASE_URL, echo=True)
 
 # Sesión asíncrona para interactuar con la base de datos
-# autoflush=False asegura que no se hagan commits automáticos
-# expire_on_commit=False permite acceder a objetos después de un commit
 AsyncSessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
-    class_=AsyncSession # Usamos AsyncSession para soporte asíncrono
+    class_=AsyncSession, # Usamos AsyncSession para soporte asíncrono
+    expire_on_commit=False  # <-- ESTA ES LA LÍNEA CLAVE DE LA SOLUCIÓN
 )
 
 # Base declarativa para tus modelos ORM

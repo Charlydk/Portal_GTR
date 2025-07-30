@@ -1912,6 +1912,7 @@ async def get_campana_bitacora_by_date(
 
     result = await db.execute(
         select(models.BitacoraEntry)
+        .options(selectinload(models.BitacoraEntry.campana)) # Carga la relación 'campana'
         .filter(models.BitacoraEntry.campana_id == campana_id, models.BitacoraEntry.fecha == fecha)
         .order_by(models.BitacoraEntry.hora)
     )
@@ -1945,14 +1946,8 @@ async def create_bitacora_entry(
         if not analista_with_campanas or campana_existente not in analista_with_campanas.campanas_asignadas:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear entradas de bitácora en esta campana.")
     
-    existing_entry_result = await db.execute(
-        select(models.BitacoraEntry)
-        .filter(models.BitacoraEntry.campana_id == entry.campana_id)
-        .filter(models.BitacoraEntry.fecha == entry.fecha)
-        .filter(models.BitacoraEntry.hora == entry.hora)
-    )
-    if existing_entry_result.scalars().first():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe una entrada de bitácora para esta fecha y hora en esta campana. Por favor, actualiza la existente.")
+    
+    
 
     # Crear la entrada de bitácora, incluyendo los campos de incidencia si se proporcionan
     db_entry = models.BitacoraEntry(
@@ -1967,14 +1962,26 @@ async def create_bitacora_entry(
     db.add(db_entry)
     try:
         await db.commit()
+        await db.refresh(db_entry) # Necesario para obtener el ID
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al crear entrada de bitácora: {e}"
         )
-    await db.refresh(db_entry)
-    return db_entry
+    
+    # --- CORRECCIÓN ---
+    # Volver a cargar la entrada con la relación 'campana' para la respuesta
+    result = await db.execute(
+        select(models.BitacoraEntry)
+        .options(selectinload(models.BitacoraEntry.campana))
+        .filter(models.BitacoraEntry.id == db_entry.id)
+    )
+    entry_to_return = result.scalars().first()
+    if not entry_to_return:
+        raise HTTPException(status_code=500, detail="No se pudo recargar la entrada de bitácora.")
+        
+    return entry_to_return
 
 @app.put("/bitacora_entries/{entry_id}", response_model=BitacoraEntry, summary="Actualizar una Entrada de Bitácora (Protegido)")
 async def update_bitacora_entry(
@@ -2034,14 +2041,27 @@ async def update_bitacora_entry(
 
     try:
         await db.commit()
+        await db.refresh(db_entry) # Necesario para actualizar el objeto
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al actualizar entrada de bitácora: {e}"
         )
-    await db.refresh(db_entry)
-    return db_entry
+    
+    # --- CORRECCIÓN ---
+    # Volver a cargar la entrada con la relación 'campana' para la respuesta
+    result = await db.execute(
+        select(models.BitacoraEntry)
+        .options(selectinload(models.BitacoraEntry.campana))
+        .filter(models.BitacoraEntry.id == db_entry.id)
+    )
+    entry_to_return = result.scalars().first()
+    if not entry_to_return:
+        raise HTTPException(status_code=500, detail="No se pudo recargar la entrada de bitácora.")
+        
+    return entry_to_return
+
 
 @app.delete("/bitacora_entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Entrada de Bitácora (Protegido)")
 async def delete_bitacora_entry(
@@ -2112,25 +2132,26 @@ async def get_bitacora_general_comment(
 
     db_comment_result = await db.execute(
         select(models.BitacoraGeneralComment)
+        .options(selectinload(models.BitacoraGeneralComment.campana)) # Carga la relación 'campana'
         .filter(models.BitacoraGeneralComment.campana_id == campana_id)
     )
     db_comment = db_comment_result.scalars().first()
     return db_comment # Retorna None si no existe, lo cual es manejado por Optional[BitacoraGeneralComment]
 
-@app.put("/campanas/{campana_id}/bitacora_general_comment", response_model=BitacoraGeneralComment, summary="Crear/Actualizar Comentario General de Bitácora (Solo Supervisor/Responsable)")
+@app.put("/campanas/{campana_id}/bitacora_general_comment", response_model=BitacoraGeneralComment, summary="Crear/Actualizar Comentario General de Bitácora (Protegido)")
 async def upsert_bitacora_general_comment(
     campana_id: int,
     comment_update: BitacoraGeneralCommentUpdate,
     db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    # CORRECCIÓN 1: Permitimos que los ANALISTAS también usen esta función
+    current_analista: models.Analista = Depends(require_role([UserRole.ANALISTA, UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
 ):
     """
     Crea o actualiza el comentario general de la bitácora para una campana.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
+    Requiere autenticación.
     """
     campana_existente_result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
-    campana_existente = campana_existente_result.scalars().first()
-    if not campana_existente:
+    if not campana_existente_result.scalars().first():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 
     db_comment_result = await db.execute(
@@ -2140,23 +2161,32 @@ async def upsert_bitacora_general_comment(
     db_comment = db_comment_result.scalars().first()
 
     if db_comment:
-        for field, value in comment_update.model_dump(exclude_unset=True).items():
-            setattr(db_comment, field, value)
+        db_comment.comentario = comment_update.comentario
         db_comment.fecha_ultima_actualizacion = func.now()
     else:
         db_comment = models.BitacoraGeneralComment(campana_id=campana_id, comentario=comment_update.comentario)
         db.add(db_comment)
-    
+
     try:
         await db.commit()
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al guardar comentario general de bitácora: {e}"
+            detail=f"Error inesperado al guardar comentario: {e}"
         )
-    await db.refresh(db_comment)
-    return db_comment
+
+    # CORRECCIÓN 2: Volver a cargar el comentario con la relación para evitar el error
+    result = await db.execute(
+        select(models.BitacoraGeneralComment)
+        .options(selectinload(models.BitacoraGeneralComment.campana))
+        .filter(models.BitacoraGeneralComment.id == db_comment.id)
+    )
+    comment_to_return = result.scalars().first()
+    if not comment_to_return:
+         raise HTTPException(status_code=500, detail="No se pudo recargar el comentario después de guardarlo.")
+
+    return comment_to_return
 
 # --- ENDPOINT PARA OBTENER SOLO INCIDENCIAS (FILTRANDO LA BITÁCORA) ---
 @app.get("/incidencias/", response_model=List[BitacoraEntry], summary="Obtener Incidencias (filtradas de la Bitácora) (Protegido)")
