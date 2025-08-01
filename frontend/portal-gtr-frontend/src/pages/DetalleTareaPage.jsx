@@ -314,42 +314,30 @@ const handleDejarTarea = async () => {
     );
   }
 
-  // Permisos para ver la tarea (ya manejado por el backend, pero buena práctica en frontend)
-  // Verificamos si el analista está asignado a la campaña a la que pertenece la tarea
-  const isAssignedToCampaign = user && 
-  user.campanas_asignadas && 
-  user.campanas_asignadas.some(c => c.id === tarea.campana_id);
+  /// --- LÓGICA DE PERMISOS CORREGIDA ---
 
-  // Permisos para ver la tarea
+  const isAssignedToCampaign = user?.campanas_asignadas?.some(c => c.id === tarea.campana_id);
+
   const canViewTask = user && (
-  user.role === 'SUPERVISOR' || 
-  user.role === 'RESPONSABLE' || 
-  // Un analista puede ver si la tarea es suya O si pertenece a una de sus campañas
-  (user.role === 'ANALISTA' && (tarea.analista_id === user.id || isAssignedToCampaign))
+    user.role === 'SUPERVISOR' || 
+    user.role === 'RESPONSABLE' || 
+    (user.role === 'ANALISTA' && (tarea.analista_id === user.id || (tarea.analista_id === null && isAssignedToCampaign)))
   );
 
-  // Permisos para editar la tarea (incluye progreso y descripción)
   const canEditTask = user && (
     user.role === 'SUPERVISOR' || 
     user.role === 'RESPONSABLE' || 
     (user.role === 'ANALISTA' && tarea.analista_id === user.id)
   );
-
-  // Permisos para eliminar la tarea (solo Supervisor)
+  
   const canDeleteTask = user && user.role === 'SUPERVISOR';
 
-  // Permisos para crear checklist items para esta tarea
-  const canCreateChecklistItem = user && (
+  // CAMBIO CLAVE: Permisos para crear/editar checklist items
+  const canManageChecklist = user && (
     user.role === 'SUPERVISOR' ||
     user.role === 'RESPONSABLE' ||
-    (user.role === 'ANALISTA' && tarea.analista_id === user.id)
-  );
-
-  // Permisos para editar checklist items de esta tarea (solo Analista si es su tarea, o Supervisor/Responsable)
-  const canEditChecklistItem = ( ) => user && (
-    user.role === 'SUPERVISOR' ||
-    user.role === 'RESPONSABLE' ||
-    (user.role === 'ANALISTA' && tarea.analista_id === user.id)
+    // Un analista puede si la tarea es suya O si está libre en su campaña
+    (user.role === 'ANALISTA' && (tarea.analista_id === user.id || (tarea.analista_id === null && isAssignedToCampaign)))
   );
 
 
@@ -439,7 +427,8 @@ const handleDejarTarea = async () => {
           )}
 
           <h4 className="mt-4 mb-3">Checklist Items</h4>
-          {canCreateChecklistItem && ( // Solo mostrar el botón si tiene permisos
+          {/* CAMBIO: Usamos la nueva variable de permisos 'canManageChecklist' */}
+          {canManageChecklist && (
             <div className="d-flex justify-content-end mb-3">
               <Button
                 variant="success"
@@ -460,15 +449,17 @@ const handleDejarTarea = async () => {
                     label={item.descripcion}
                     checked={item.completado}
                     onChange={() => handleToggleChecklistItem(item.id, item.completado)}
-                    disabled={submittingChecklist === item.id || !canEditChecklistItem(item)}
+                    // CAMBIO: Usamos la nueva variable de permisos 'canManageChecklist'
+                    disabled={submittingChecklist === item.id || !canManageChecklist}
                   />
                   {submittingChecklist === item.id && <Spinner animation="border" size="sm" className="ms-2" />}
-                  {canEditChecklistItem(item) && ( // Mostrar el botón de editar si tiene permisos
+                  {/* CAMBIO: Usamos la nueva variable de permisos 'canManageChecklist' */}
+                  {canManageChecklist && (
                     <Button
                       variant="outline-secondary"
                       size="sm"
                       onClick={() => navigate(`/tareas/${tarea.id}/checklist_items/editar/${item.id}`)}
-                      className="ms-3" // Añadir un poco de margen
+                      className="ms-3"
                     >
                       Editar
                     </Button>

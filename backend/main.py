@@ -967,10 +967,6 @@ async def obtener_tarea_por_id(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Obtiene una tarea específica por su ID desde la base de datos,
-    incluyendo nombres de Analista, Campaña y sus Checklist Items.
-    """
     result = await db.execute(
         select(models.Tarea)
         .filter(models.Tarea.id == tarea_id)
@@ -978,7 +974,7 @@ async def obtener_tarea_por_id(
             selectinload(models.Tarea.analista),
             selectinload(models.Tarea.campana),
             selectinload(models.Tarea.checklist_items),
-            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista) # Cargar historial con el analista que hizo el cambio
+            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista)
         )
     )
     tarea = result.scalars().first()
@@ -986,8 +982,22 @@ async def obtener_tarea_por_id(
     if not tarea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada.")
     
-    if current_analista.role == UserRole.ANALISTA.value and tarea.analista_id != current_analista.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver esta tarea.")
+    # --- CAMBIO CLAVE: Nueva lógica de permisos para analistas ---
+    if current_analista.role == UserRole.ANALISTA.value:
+        is_assigned_to_task = tarea.analista_id == current_analista.id
+        
+        is_task_in_assigned_campaign = False
+        # Si la tarea no está asignada y pertenece a una campaña...
+        if tarea.analista_id is None and tarea.campana_id is not None:
+            # Verificamos si la campaña de la tarea está en la lista de campañas del analista
+            assigned_campaign_ids = [c.id for c in current_analista.campanas_asignadas]
+            if tarea.campana_id in assigned_campaign_ids:
+                is_task_in_assigned_campaign = True
+
+        # El analista puede ver la tarea SOLO si está asignado a ella
+        # O si la tarea está libre en una de sus campañas.
+        if not is_assigned_to_task and not is_task_in_assigned_campaign:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver esta tarea.")
 
     return tarea
 
@@ -1130,23 +1140,33 @@ async def crear_checklist_item(
 ):
     """
     Crea un nuevo elemento de checklist asociado a una tarea.
-    Requiere autenticación.
-    - Un Analista puede crear ítems para tareas a las que está asignado.
+    - Un Analista puede crear ítems para tareas a las que está asignado o que están libres en sus campañas.
     - Un Supervisor o Responsable pueden crear ítems para cualquier tarea.
     """
     tarea_existente_result = await db.execute(
         select(models.Tarea)
         .filter(models.Tarea.id == item.tarea_id)
-        .options(selectinload(models.Tarea.analista), selectinload(models.Tarea.campana))
     )
     tarea_existente = tarea_existente_result.scalars().first()
     if tarea_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada para asociar el ChecklistItem")
 
-    # Lógica de permisos para Analistas
+    # --- CAMBIO CLAVE: Nueva lógica de permisos para analistas ---
     if current_analista.role == UserRole.ANALISTA.value:
-        if tarea_existente.analista_id != current_analista.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear ítems de checklist para esta tarea. Solo puedes crear ítems para tus propias tareas.")
+        is_assigned_to_task = tarea_existente.analista_id == current_analista.id
+        
+        is_task_in_assigned_campaign = False
+        # Si la tarea no está asignada y pertenece a una campaña...
+        if tarea_existente.analista_id is None and tarea_existente.campana_id is not None:
+            # Verificamos si la campaña de la tarea está en la lista de campañas del analista
+            assigned_campaign_ids = [c.id for c in current_analista.campanas_asignadas]
+            if tarea_existente.campana_id in assigned_campaign_ids:
+                is_task_in_assigned_campaign = True
+
+        # El analista puede crear el item SOLO si está asignado a la tarea
+        # O si la tarea está libre en una de sus campañas.
+        if not is_assigned_to_task and not is_task_in_assigned_campaign:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear ítems de checklist para esta tarea.")
     
     # Si es Supervisor o Responsable, no hay restricciones adicionales.
 
@@ -1154,13 +1174,14 @@ async def crear_checklist_item(
     db.add(db_item)
     try:
         await db.commit()
+        await db.refresh(db_item)
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al crear checklist item: {e}"
         )
-    await db.refresh(db_item)
+    
     result = await db.execute(
         select(models.ChecklistItem)
         .filter(models.ChecklistItem.id == db_item.id)

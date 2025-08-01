@@ -4,7 +4,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Table
 from datetime import datetime
 
-# Ahora importamos todos los Enums desde nuestro nuevo archivo central
+# Importamos todos los Enums desde nuestro archivo central
 from enums import UserRole, ProgresoTarea, TipoIncidencia, EstadoIncidencia
 
 Base = declarative_base()
@@ -35,8 +35,6 @@ class Analista(Base):
     acuses_recibo_avisos = relationship("AcuseReciboAviso", back_populates="analista")
     tareas_generadas_por_avisos = relationship("TareaGeneradaPorAviso", back_populates="analista_asignado")
     comentarios_generales_bitacora = relationship("ComentarioGeneralBitacora", back_populates="autor")
-    
-    # NUEVO: Relaciones con el nuevo módulo de incidencias
     incidencias_creadas = relationship("Incidencia", back_populates="creador", foreign_keys='Incidencia.creador_id')
     actualizaciones_incidencia_hechas = relationship("ActualizacionIncidencia", back_populates="autor")
 
@@ -56,8 +54,6 @@ class Campana(Base):
     avisos = relationship("Aviso", back_populates="campana", cascade="all, delete-orphan")
     bitacora_entries = relationship("BitacoraEntry", back_populates="campana", cascade="all, delete-orphan")
     comentarios_generales = relationship("ComentarioGeneralBitacora", back_populates="campana", cascade="all, delete-orphan")
-    
-    # NUEVO: Relación con las incidencias de la campaña
     incidencias = relationship("Incidencia", back_populates="campana", cascade="all, delete-orphan")
 
 class Tarea(Base):
@@ -67,6 +63,7 @@ class Tarea(Base):
     titulo = Column(String, nullable=False)
     descripcion = Column(String, nullable=True)
     fecha_vencimiento = Column(DateTime, nullable=False)
+    # CAMBIO: Se mantiene el nombre base "progresotarea"
     progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=False, default=ProgresoTarea.PENDIENTE)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_finalizacion = Column(DateTime, nullable=True)
@@ -148,7 +145,8 @@ class TareaGeneradaPorAviso(Base):
     titulo = Column(String, nullable=False)
     descripcion = Column(String, nullable=True)
     fecha_vencimiento = Column(DateTime, nullable=True)
-    progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea_gen"), nullable=False, default=ProgresoTarea.PENDIENTE)
+    # CAMBIO: Usamos el nombre base "progresotarea"
+    progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=False, default=ProgresoTarea.PENDIENTE)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_finalizacion = Column(DateTime, nullable=True)
     
@@ -162,8 +160,9 @@ class TareaGeneradaPorAviso(Base):
 class HistorialEstadoTarea(Base):
     __tablename__ = "historial_estados_tarea"
     id = Column(Integer, primary_key=True, index=True)
-    old_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea_hist_old"), nullable=True)
-    new_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea_hist_new"), nullable=False)
+    # CAMBIO: Usamos el nombre base "progresotarea" para ambos
+    old_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=True)
+    new_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=False)
     timestamp = Column(DateTime, default=func.now(), nullable=False)
     
     changed_by_analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
@@ -175,40 +174,29 @@ class HistorialEstadoTarea(Base):
     tarea_campana_rel = relationship("Tarea", back_populates="historial_estados")
     tarea_generada_rel = relationship("TareaGeneradaPorAviso", back_populates="historial_estados")
 
-# --- NUEVOS MODELOS PARA EL MÓDULO DE INCIDENCIAS ---
-
 class Incidencia(Base):
     __tablename__ = "incidencias"
-
     id = Column(Integer, primary_key=True, index=True)
     titulo = Column(String, nullable=False)
     descripcion_inicial = Column(Text, nullable=False)
     herramienta_afectada = Column(String, nullable=True)
     indicador_afectado = Column(String, nullable=True)
-    
     tipo = Column(SQLEnum(TipoIncidencia, name="tipoincidencia_inc"), nullable=False)
     estado = Column(SQLEnum(EstadoIncidencia, name="estadoincidencia"), nullable=False, default=EstadoIncidencia.ABIERTA)
-    
     fecha_apertura = Column(DateTime, default=func.now())
     fecha_cierre = Column(DateTime, nullable=True)
-
     creador_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
-
     creador = relationship("Analista", back_populates="incidencias_creadas", foreign_keys=[creador_id])
     campana = relationship("Campana", back_populates="incidencias")
-    
     actualizaciones = relationship("ActualizacionIncidencia", back_populates="incidencia", cascade="all, delete-orphan")
 
 class ActualizacionIncidencia(Base):
     __tablename__ = "actualizaciones_incidencia"
-
     id = Column(Integer, primary_key=True, index=True)
     comentario = Column(Text, nullable=False)
     fecha_actualizacion = Column(DateTime, default=func.now())
-
     incidencia_id = Column(Integer, ForeignKey("incidencias.id"), nullable=False)
     autor_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
-
     incidencia = relationship("Incidencia", back_populates="actualizaciones")
     autor = relationship("Analista", back_populates="actualizaciones_incidencia_hechas")
