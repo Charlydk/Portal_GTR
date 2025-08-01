@@ -16,21 +16,17 @@ from enums import UserRole, ProgresoTarea, TipoIncidencia
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
-    Token, TokenData,
-    ProgresoTarea, UserRole, TipoIncidencia, # Asegurarse de importar TipoIncidencia aquí
+     Token, TokenData,
+    ProgresoTarea, UserRole, TipoIncidencia,
     AnalistaBase, Analista, AnalistaCreate, PasswordUpdate, AnalistaMe,
     CampanaBase, Campana, CampanaSimple,
     TareaBase, Tarea, TareaSimple, TareaListOutput, TareaUpdate,
     ChecklistItemBase, ChecklistItem, ChecklistItemSimple, ChecklistItemUpdate,
-    ComentarioCampanaBase, ComentarioCampana, ComentarioCampanaSimple,
     AvisoBase, Aviso, AvisoSimple, AvisoListOutput,
     AcuseReciboAviso, AcuseReciboCreate, AcuseReciboAvisoSimple,
     BitacoraEntryBase, BitacoraEntryUpdate, BitacoraEntry,
-    BitacoraGeneralCommentBase, BitacoraGeneralCommentUpdate, BitacoraGeneralComment,
-    BitacoraEntrySimple, BitacoraGeneralCommentSimple,
-    # Nuevos esquemas para TareaGeneradaPorAviso
+    ComentarioGeneralBitacoraCreate, ComentarioGeneralBitacora,
     TareaGeneradaPorAvisoBase, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAviso, TareaGeneradaPorAvisoSimple,
-    # Nuevos esquemas para HistorialEstadoTarea
     HistorialEstadoTareaBase, HistorialEstadoTarea, HistorialEstadoTareaSimple
 )
 
@@ -689,28 +685,17 @@ async def crear_campana(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
 ):
-    """
-    Crea una nueva campaña en el sistema y la guarda en la base de datos.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
-    """
-    # CORRECCIÓN: Asegurarse de que las fechas sean timezone-naive
-    campana_data = campana.model_dump()
-    if campana_data.get("fecha_inicio") is not None:
-        campana_data["fecha_inicio"] = campana_data["fecha_inicio"].replace(tzinfo=None)
-    if campana_data.get("fecha_fin") is not None:
-        campana_data["fecha_fin"] = campana_data["fecha_fin"].replace(tzinfo=None)
-
-    db_campana = models.Campana(**campana_data) # Usar campana_data modificada
+    db_campana = models.Campana(**campana.model_dump())
     db.add(db_campana)
     try:
         await db.commit()
+        await db.refresh(db_campana)
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al crear campaña: {e}"
         )
-    await db.refresh(db_campana)
 
     result = await db.execute(
         select(models.Campana)
@@ -718,10 +703,10 @@ async def crear_campana(
         .options(
             selectinload(models.Campana.analistas_asignados),
             selectinload(models.Campana.tareas),
-            selectinload(models.Campana.comentarios),
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
-            selectinload(models.Campana.bitacora_general_comment)
+            # CORRECCIÓN: Usar el nuevo nombre de la relación
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
         )
     )
     campana_to_return = result.scalars().first()
@@ -735,19 +720,15 @@ async def obtener_campanas(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Obtiene la lista de todas las campañas desde la base de datos.
-    Requiere autenticación.
-    """
     result = await db.execute(
         select(models.Campana)
         .options(
             selectinload(models.Campana.analistas_asignados),
             selectinload(models.Campana.tareas),
-            selectinload(models.Campana.comentarios),
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
-            selectinload(models.Campana.bitacora_general_comment)
+            # CORRECCIÓN: Usar el nuevo nombre de la relación y cargar el autor del comentario
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
         )
     )
     campanas = result.scalars().unique().all()
@@ -760,21 +741,16 @@ async def obtener_campana_por_id(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Obtiene una campana específica por su ID desde la base de datos.
-    Requiere autenticación.
-    Cualquier usuario autenticado puede ver los detalles de cualquier campana.
-    """
     result = await db.execute(
         select(models.Campana)
         .filter(models.Campana.id == campana_id)
         .options(
             selectinload(models.Campana.analistas_asignados),
             selectinload(models.Campana.tareas),
-            selectinload(models.Campana.comentarios),
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
-            selectinload(models.Campana.bitacora_general_comment)
+            # CORRECCIÓN: Usar el nuevo nombre de la relación
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
         )
     )
     campana = result.scalars().first()
@@ -790,24 +766,13 @@ async def actualizar_campana(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
 ):
-    """
-    Actualiza la información de una campaña existente.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
-    """
-    db_campana = await db.execute(select(models.Campana).where(models.Campana.id == campana_id))
-    campana_existente = db_campana.scalar_one_or_none()
+    db_campana_result = await db.execute(select(models.Campana).where(models.Campana.id == campana_id))
+    campana_existente = db_campana_result.scalars().first()
 
     if campana_existente is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada")
 
     campana_data = campana_update.model_dump(exclude_unset=True)
-    
-    # CORRECCIÓN: Asegurarse de que las fechas sean timezone-naive al actualizar
-    if "fecha_inicio" in campana_data and campana_data["fecha_inicio"] is not None:
-        campana_data["fecha_inicio"] = campana_data["fecha_inicio"].replace(tzinfo=None)
-    if "fecha_fin" in campana_data and campana_data["fecha_fin"] is not None:
-        campana_data["fecha_fin"] = campana_data["fecha_fin"].replace(tzinfo=None)
-
     for key, value in campana_data.items():
         setattr(campana_existente, key, value)
 
@@ -827,10 +792,10 @@ async def actualizar_campana(
         .options(
             selectinload(models.Campana.analistas_asignados),
             selectinload(models.Campana.tareas),
-            selectinload(models.Campana.comentarios),
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
-            selectinload(models.Campana.bitacora_general_comment)
+            # CORRECCIÓN: Usar el nuevo nombre de la relación
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
         )
     )
     updated_campana = updated_campana_result.scalars().first()
@@ -1358,101 +1323,6 @@ async def eliminar_checklist_item(
     return
 
 
-# --- Endpoints para Comentarios de Campaña (Protegidos) ---
-
-@app.post("/comentarios_campana/", response_model=ComentarioCampana, status_code=status.HTTP_201_CREATED, summary="Crear un nuevo Comentario de Campaña (Protegido)")
-async def crear_comentario_campana(
-    comentario: ComentarioCampanaBase,
-    db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(get_current_analista)
-):
-    """
-    Crea un nuevo comentario asociado a una campaña y a un analista.
-    Requiere autenticación.
-    """
-    analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == comentario.analista_id))
-    if analista_result.scalars().first() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analista no encontrado.")
-
-    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == comentario.campana_id))
-    if campana_result.scalars().first() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
-
-    db_comentario = models.ComentarioCampana(**comentario.model_dump())
-    db.add(db_comentario)
-    try:
-        await db.commit()
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al crear comentario de campaña: {e}"
-        )
-    await db.refresh(db_comentario)
-
-    result = await db.execute(
-        select(models.ComentarioCampana)
-        .options(selectinload(models.ComentarioCampana.analista), selectinload(models.ComentarioCampana.campana))
-        .filter(models.ComentarioCampana.id == db_comentario.id)
-    )
-    comentario_to_return = result.scalars().first()
-    if not comentario_to_return:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error al recargar el comentario después de la creación.")
-    
-    return comentario_to_return
-
-
-@app.get("/comentarios_campana/", response_model=List[ComentarioCampana], summary="Obtener Comentarios de Campaña (con filtros opcionales) (Protegido)")
-async def obtener_comentarios_campana(
-    db: AsyncSession = Depends(get_db),
-    campana_id: Optional[int] = None,
-    analista_id: Optional[int] = None,
-    current_analista: models.Analista = Depends(get_current_analista)
-):
-    """
-    Obtiene todos los comentarios de campaña, o filtra por ID de campaña y/o ID de analista.
-    Requiere autenticación.
-    """
-    query = select(models.ComentarioCampana).options(
-        selectinload(models.ComentarioCampana.analista),
-        selectinload(models.ComentarioCampana.campana)
-    )
-    if campana_id:
-        query = query.where(models.ComentarioCampana.campana_id == campana_id)
-    if analista_id:
-        query = query.where(models.ComentarioCampana.analista_id == analista_id)
-
-    comentarios = await db.execute(query)
-    return comentarios.scalars().unique().all()
-
-
-@app.delete("/comentarios_campana/{comentario_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar un Comentario de Campaña (Protegido por Supervisor)")
-async def eliminar_comentario_campana(
-    comentario_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR]))
-):
-    """
-    Elimina un comentario de campaña existente.
-    Requiere autenticación y rol de SUPERVISOR.
-    """
-    db_comentario_result = await db.execute(select(models.ComentarioCampana).where(models.ComentarioCampana.id == comentario_id))
-    comentario_a_eliminar = db_comentario_result.scalars().first()
-
-    if comentario_a_eliminar is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comentario de Campaña no encontrado.")
-
-    try:
-        await db.delete(comentario_a_eliminar)
-        await db.commit()
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al eliminar comentario de campaña: {e}"
-        )
-    return
-
 
 # --- Endpoints para Avisos (Protegidos) ---
 
@@ -1890,11 +1760,6 @@ async def get_campana_bitacora_by_date(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Obtiene las entradas de bitácora para una campana específica y una fecha dada.
-    Cualquier usuario autenticado puede ver la bitácora de cualquier campaña a la que esté asignado.
-    Supervisores y Responsables pueden ver la bitácora de cualquier campaña.
-    """
     campana_existente_result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
     campana_existente = campana_existente_result.scalars().first()
     if not campana_existente:
@@ -1912,7 +1777,7 @@ async def get_campana_bitacora_by_date(
 
     result = await db.execute(
         select(models.BitacoraEntry)
-        .options(selectinload(models.BitacoraEntry.campana)) # Carga la relación 'campana'
+        .options(selectinload(models.BitacoraEntry.campana))
         .filter(models.BitacoraEntry.campana_id == campana_id, models.BitacoraEntry.fecha == fecha)
         .order_by(models.BitacoraEntry.hora)
     )
@@ -1925,12 +1790,6 @@ async def create_bitacora_entry(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Crea una nueva entrada de bitácora para una campana en una fecha y hora específicas.
-    Puede ser una entrada de bitácora general o una incidencia.
-    Un Analista solo puede crear entradas para campañas a las que está asignado.
-    Un Supervisor o Responsable pueden crear entradas para cualquier campaña.
-    """
     campana_existente_result = await db.execute(select(models.Campana).filter(models.Campana.id == entry.campana_id))
     campana_existente = campana_existente_result.scalars().first()
     if not campana_existente:
@@ -1946,23 +1805,11 @@ async def create_bitacora_entry(
         if not analista_with_campanas or campana_existente not in analista_with_campanas.campanas_asignadas:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear entradas de bitácora en esta campana.")
     
-    
-    
-
-    # Crear la entrada de bitácora, incluyendo los campos de incidencia si se proporcionan
-    db_entry = models.BitacoraEntry(
-        campana_id=entry.campana_id,
-        fecha=entry.fecha,
-        hora=entry.hora,
-        comentario=entry.comentario,
-        es_incidencia=entry.es_incidencia,
-        tipo_incidencia=entry.tipo_incidencia,
-        comentario_incidencia=entry.comentario_incidencia
-    )
+    db_entry = models.BitacoraEntry(**entry.model_dump())
     db.add(db_entry)
     try:
         await db.commit()
-        await db.refresh(db_entry) # Necesario para obtener el ID
+        await db.refresh(db_entry)
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -1970,8 +1817,6 @@ async def create_bitacora_entry(
             detail=f"Error inesperado al crear entrada de bitácora: {e}"
         )
     
-    # --- CORRECCIÓN ---
-    # Volver a cargar la entrada con la relación 'campana' para la respuesta
     result = await db.execute(
         select(models.BitacoraEntry)
         .options(selectinload(models.BitacoraEntry.campana))
@@ -1990,11 +1835,6 @@ async def update_bitacora_entry(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Actualiza una entrada de bitácora existente.
-    Un Analista solo puede actualizar entradas de bitácora de campanas a las que está asignado.
-    Un Supervisor o Responsable pueden actualizar cualquier entrada.
-    """
     db_entry_result = await db.execute(
         select(models.BitacoraEntry)
         .filter(models.BitacoraEntry.id == entry_id)
@@ -2015,25 +1855,6 @@ async def update_bitacora_entry(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para actualizar esta entrada de bitácora.")
 
     update_data = entry_update.model_dump(exclude_unset=True)
-
-    if ("fecha" in update_data and update_data["fecha"] != db_entry.fecha) or \
-       ("hora" in update_data and update_data["hora"] != db_entry.hora):
-        
-        new_fecha = update_data.get("fecha", db_entry.fecha)
-        new_hora = update_data.get("hora", db_entry.hora)
-
-        existing_entry_at_new_time_result = await db.execute(
-            select(models.BitacoraEntry)
-            .filter(
-                models.BitacoraEntry.campana_id == db_entry.campana_id,
-                models.BitacoraEntry.fecha == new_fecha,
-                models.BitacoraEntry.hora == new_hora,
-                models.BitacoraEntry.id != entry_id
-            )
-        )
-        if existing_entry_at_new_time_result.scalars().first():
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe una entrada de bitácora para la nueva fecha y hora en esta campana.")
-
     for field, value in update_data.items():
         setattr(db_entry, field, value)
     
@@ -2041,7 +1862,7 @@ async def update_bitacora_entry(
 
     try:
         await db.commit()
-        await db.refresh(db_entry) # Necesario para actualizar el objeto
+        await db.refresh(db_entry)
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -2049,8 +1870,6 @@ async def update_bitacora_entry(
             detail=f"Error inesperado al actualizar entrada de bitácora: {e}"
         )
     
-    # --- CORRECCIÓN ---
-    # Volver a cargar la entrada con la relación 'campana' para la respuesta
     result = await db.execute(
         select(models.BitacoraEntry)
         .options(selectinload(models.BitacoraEntry.campana))
@@ -2069,11 +1888,6 @@ async def delete_bitacora_entry(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Elimina una entrada de bitácora existente.
-    Un Analista solo puede eliminar entradas de bitácora de campanas a las que está asignado.
-    Un Supervisor o Responsable pueden eliminar cualquier entrada.
-    """
     db_entry_result = await db.execute(
         select(models.BitacoraEntry)
         .filter(models.BitacoraEntry.id == entry_id)
@@ -2102,19 +1916,17 @@ async def delete_bitacora_entry(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error inesperado al eliminar entrada de bitácora: {e}"
         )
-    return {"message": "Entrada de bitácora eliminada exitosamente."}
+    return
 
-@app.get("/campanas/{campana_id}/bitacora_general_comment", response_model=Optional[BitacoraGeneralComment], summary="Obtener Comentario General de Bitácora (Protegido)")
-async def get_bitacora_general_comment(
+
+# --- NUEVOS ENDPOINTS PARA COMENTARIOS GENERALES DE BITÁCORA ---
+
+@app.get("/campanas/{campana_id}/comentarios_generales", response_model=List[ComentarioGeneralBitacora], summary="Obtener todos los Comentarios Generales de una Campaña")
+async def get_comentarios_generales_de_campana(
     campana_id: int,
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Obtiene el comentario general de la bitácora para una campana específica.
-    Cualquier usuario autenticado puede ver el comentario general de cualquier campaña a la que esté asignado.
-    Supervisores y Responsables pueden ver el comentario de cualquier campaña.
-    """
     campana_existente_result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
     campana_existente = campana_existente_result.scalars().first()
     if not campana_existente:
@@ -2128,65 +1940,55 @@ async def get_bitacora_general_comment(
         )
         analista_with_campanas = analista_with_campanas_result.scalars().first()
         if not analista_with_campanas or campana_existente not in analista_with_campanas.campanas_asignadas:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver el comentario general de esta campana.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver los comentarios de esta campaña.")
 
-    db_comment_result = await db.execute(
-        select(models.BitacoraGeneralComment)
-        .options(selectinload(models.BitacoraGeneralComment.campana)) # Carga la relación 'campana'
-        .filter(models.BitacoraGeneralComment.campana_id == campana_id)
+    result = await db.execute(
+        select(models.ComentarioGeneralBitacora)
+        .options(selectinload(models.ComentarioGeneralBitacora.autor))
+        .filter(models.ComentarioGeneralBitacora.campana_id == campana_id)
+        .order_by(models.ComentarioGeneralBitacora.fecha_creacion.desc())
     )
-    db_comment = db_comment_result.scalars().first()
-    return db_comment # Retorna None si no existe, lo cual es manejado por Optional[BitacoraGeneralComment]
+    comentarios = result.scalars().all()
+    return comentarios
 
-@app.put("/campanas/{campana_id}/bitacora_general_comment", response_model=BitacoraGeneralComment, summary="Crear/Actualizar Comentario General de Bitácora (Protegido)")
-async def upsert_bitacora_general_comment(
+@app.post("/campanas/{campana_id}/comentarios_generales", response_model=ComentarioGeneralBitacora, status_code=status.HTTP_201_CREATED, summary="Añadir un nuevo Comentario General a una Campaña")
+async def create_comentario_general_para_campana(
     campana_id: int,
-    comment_update: BitacoraGeneralCommentUpdate,
+    comentario_data: ComentarioGeneralBitacoraCreate,
     db: AsyncSession = Depends(get_db),
-    # CORRECCIÓN 1: Permitimos que los ANALISTAS también usen esta función
-    current_analista: models.Analista = Depends(require_role([UserRole.ANALISTA, UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
+    current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Crea o actualiza el comentario general de la bitácora para una campana.
-    Requiere autenticación.
-    """
     campana_existente_result = await db.execute(select(models.Campana).filter(models.Campana.id == campana_id))
     if not campana_existente_result.scalars().first():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 
-    db_comment_result = await db.execute(
-        select(models.BitacoraGeneralComment)
-        .filter(models.BitacoraGeneralComment.campana_id == campana_id)
+    db_comentario = models.ComentarioGeneralBitacora(
+        comentario=comentario_data.comentario,
+        campana_id=campana_id,
+        autor_id=current_analista.id
     )
-    db_comment = db_comment_result.scalars().first()
-
-    if db_comment:
-        db_comment.comentario = comment_update.comentario
-        db_comment.fecha_ultima_actualizacion = func.now()
-    else:
-        db_comment = models.BitacoraGeneralComment(campana_id=campana_id, comentario=comment_update.comentario)
-        db.add(db_comment)
-
+    db.add(db_comentario)
     try:
         await db.commit()
+        await db.refresh(db_comentario)
     except Exception as e:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al guardar comentario: {e}"
+            detail=f"Error inesperado al guardar el comentario: {e}"
         )
 
-    # CORRECCIÓN 2: Volver a cargar el comentario con la relación para evitar el error
     result = await db.execute(
-        select(models.BitacoraGeneralComment)
-        .options(selectinload(models.BitacoraGeneralComment.campana))
-        .filter(models.BitacoraGeneralComment.id == db_comment.id)
+        select(models.ComentarioGeneralBitacora)
+        .options(selectinload(models.ComentarioGeneralBitacora.autor))
+        .filter(models.ComentarioGeneralBitacora.id == db_comentario.id)
     )
-    comment_to_return = result.scalars().first()
-    if not comment_to_return:
+    comentario_to_return = result.scalars().first()
+    if not comentario_to_return:
          raise HTTPException(status_code=500, detail="No se pudo recargar el comentario después de guardarlo.")
 
-    return comment_to_return
+    return comentario_to_return
+
 
 # --- ENDPOINT PARA OBTENER SOLO INCIDENCIAS (FILTRANDO LA BITÁCORA) ---
 @app.get("/incidencias/", response_model=List[BitacoraEntry], summary="Obtener Incidencias (filtradas de la Bitácora) (Protegido)")
