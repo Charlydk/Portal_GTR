@@ -4,13 +4,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Table
 from datetime import datetime
 
-# --- CORRECCIÓN 1: Importamos los Enums desde el archivo central 'enums.py' ---
+# --- Importamos los Enums desde el archivo central 'enums.py' ---
 from enums import UserRole, ProgresoTarea, TipoIncidencia
 
 Base = declarative_base()
-
-# --- CORRECCIÓN 2: Eliminamos las declaraciones de Enum duplicadas de este archivo ---
-# Ya no se necesitan, porque las estamos importando.
 
 # Tabla de asociación para Analistas y Campañas (muchos a muchos)
 analistas_campanas = Table(
@@ -29,7 +26,6 @@ class Analista(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     bms_id = Column(Integer, unique=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    # --- CORRECCIÓN 3: Usamos el Enum importado ---
     role = Column(SQLEnum(UserRole, name="userrole"), nullable=False, default=UserRole.ANALISTA)
     esta_activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=func.now())
@@ -39,6 +35,9 @@ class Analista(Base):
     avisos_creados = relationship("Aviso", back_populates="creador")
     acuses_recibo_avisos = relationship("AcuseReciboAviso", back_populates="analista")
     tareas_generadas_por_avisos = relationship("TareaGeneradaPorAviso", back_populates="analista_asignado")
+    # NUEVO: Relación para los comentarios generales que ha hecho el analista
+    comentarios_generales_bitacora = relationship("ComentarioGeneralBitacora", back_populates="autor")
+
 
 class Campana(Base):
     __tablename__ = "campanas"
@@ -52,10 +51,11 @@ class Campana(Base):
 
     analistas_asignados = relationship("Analista", secondary=analistas_campanas, back_populates="campanas_asignadas")
     tareas = relationship("Tarea", back_populates="campana", cascade="all, delete-orphan")
-    comentarios = relationship("ComentarioCampana", back_populates="campana", cascade="all, delete-orphan")
     avisos = relationship("Aviso", back_populates="campana", cascade="all, delete-orphan")
     bitacora_entries = relationship("BitacoraEntry", back_populates="campana", cascade="all, delete-orphan")
-    bitacora_general_comment = relationship("BitacoraGeneralComment", uselist=False, back_populates="campana", cascade="all, delete-orphan")
+    # CAMBIO: La relación ahora es a la nueva tabla y espera una lista de comentarios
+    comentarios_generales = relationship("ComentarioGeneralBitacora", back_populates="campana", cascade="all, delete-orphan")
+
 
 class Tarea(Base):
     __tablename__ = "tareas"
@@ -64,7 +64,6 @@ class Tarea(Base):
     titulo = Column(String, nullable=False)
     descripcion = Column(String, nullable=True)
     fecha_vencimiento = Column(DateTime, nullable=False)
-    # --- CORRECCIÓN 3: Usamos el Enum importado ---
     progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=False, default=ProgresoTarea.PENDIENTE)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_finalizacion = Column(DateTime, nullable=True)
@@ -87,17 +86,7 @@ class ChecklistItem(Base):
     tarea_id = Column(Integer, ForeignKey("tareas.id"), nullable=False)
     tarea = relationship("Tarea", back_populates="checklist_items")
 
-class ComentarioCampana(Base):
-    __tablename__ = "comentarios_campana"
-    id = Column(Integer, primary_key=True, index=True)
-    contenido = Column(String, nullable=False)
-    fecha_creacion = Column(DateTime, default=func.now())
-    
-    campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
-    analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
-
-    campana = relationship("Campana", back_populates="comentarios")
-    analista = relationship("Analista")
+# ELIMINADO: El modelo ComentarioCampana se elimina para evitar confusión. Usaremos ComentarioGeneralBitacora.
 
 class Aviso(Base):
     __tablename__ = "avisos"
@@ -135,7 +124,6 @@ class BitacoraEntry(Base):
     hora = Column(Time, nullable=False)
     comentario = Column(String, nullable=True)
     es_incidencia = Column(Boolean, default=False)
-    # --- CORRECCIÓN 3: Usamos el Enum importado ---
     tipo_incidencia = Column(SQLEnum(TipoIncidencia, name="tipoincidencia"), nullable=True)
     comentario_incidencia = Column(String, nullable=True)
     fecha_creacion = Column(DateTime, default=func.now())
@@ -144,15 +132,23 @@ class BitacoraEntry(Base):
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
     campana = relationship("Campana", back_populates="bitacora_entries")
 
-class BitacoraGeneralComment(Base):
-    __tablename__ = "bitacora_general_comments"
+# RENOMBRADO Y MODIFICADO: De 'BitacoraGeneralComment' a 'ComentarioGeneralBitacora'
+class ComentarioGeneralBitacora(Base):
+    __tablename__ = "comentarios_generales_bitacora"
     id = Column(Integer, primary_key=True, index=True)
-    comentario = Column(String, nullable=True)
+    comentario = Column(String, nullable=False)
     fecha_creacion = Column(DateTime, default=func.now())
-    fecha_ultima_actualizacion = Column(DateTime, default=func.now(), onupdate=func.now())
     
-    campana_id = Column(Integer, ForeignKey("campanas.id"), unique=True, nullable=False)
-    campana = relationship("Campana", back_populates="bitacora_general_comment")
+    # CAMBIO: Ya no es único. Ahora es una clave foránea simple.
+    campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
+    # NUEVO: Guardamos quién hizo el comentario
+    autor_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
+
+    # CAMBIO: La relación apunta a Campana
+    campana = relationship("Campana", back_populates="comentarios_generales")
+    # NUEVO: Relación para obtener la información del autor
+    autor = relationship("Analista", back_populates="comentarios_generales_bitacora")
+
 
 class TareaGeneradaPorAviso(Base):
     __tablename__ = "tareas_generadas_por_avisos"
@@ -160,7 +156,6 @@ class TareaGeneradaPorAviso(Base):
     titulo = Column(String, nullable=False)
     descripcion = Column(String, nullable=True)
     fecha_vencimiento = Column(DateTime, nullable=True)
-    # --- CORRECCIÓN 3: Usamos el Enum importado ---
     progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea_gen"), nullable=False, default=ProgresoTarea.PENDIENTE)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_finalizacion = Column(DateTime, nullable=True)
@@ -175,7 +170,6 @@ class TareaGeneradaPorAviso(Base):
 class HistorialEstadoTarea(Base):
     __tablename__ = "historial_estados_tarea"
     id = Column(Integer, primary_key=True, index=True)
-    # --- CORRECCIÓN 3: Usamos el Enum importado ---
     old_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea_hist_old"), nullable=True)
     new_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea_hist_new"), nullable=False)
     timestamp = Column(DateTime, default=func.now(), nullable=False)

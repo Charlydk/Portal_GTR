@@ -1,12 +1,8 @@
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime, date, time
 from typing import List, Optional
-# --- CORRECCIÓN 1: Nos aseguramos de importar los Enums correctos desde enums.py ---
 from enums import UserRole, ProgresoTarea, TipoIncidencia
 from enum import Enum
-
-# --- CORRECCIÓN 2: Eliminamos las declaraciones de Enum duplicadas de este archivo ---
-# Ahora Pydantic usará las definiciones importadas de enums.py como la única fuente de verdad.
 
 # --- Schemas Base (para creación y actualización) ---
 
@@ -37,7 +33,6 @@ class TareaBase(BaseModel):
     progreso: ProgresoTarea
     analista_id: Optional[int] = None
     campana_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None
 
 class TareaUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -46,22 +41,22 @@ class TareaUpdate(BaseModel):
     progreso: Optional[ProgresoTarea] = None
     analista_id: Optional[int] = None
     campana_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None
 
 class ChecklistItemBase(BaseModel):
-    tarea_id: int
     descripcion: str
     completado: Optional[bool] = False
+    tarea_id: int
 
 class ChecklistItemUpdate(BaseModel):
-    tarea_id: Optional[int] = None
     descripcion: Optional[str] = None
     completado: Optional[bool] = None
+    tarea_id: Optional[int] = None
 
-class ComentarioCampanaBase(BaseModel):
-    campana_id: int
-    analista_id: int
-    contenido: str
+# ELIMINADO: ComentarioCampanaBase y sus derivados ya no son necesarios.
+# class ComentarioCampanaBase(BaseModel):
+#     contenido: str
+#     campana_id: int
+#     analista_id: int
 
 class AvisoBase(BaseModel):
     titulo: str
@@ -80,7 +75,7 @@ class BitacoraEntryBase(BaseModel):
     fecha: date
     hora: time
     comentario: Optional[str] = None
-    es_incidencia: Optional[bool] = False
+    es_incidencia: bool = False
     tipo_incidencia: Optional[TipoIncidencia] = None
     comentario_incidencia: Optional[str] = None
 
@@ -92,12 +87,13 @@ class BitacoraEntryUpdate(BaseModel):
     tipo_incidencia: Optional[TipoIncidencia] = None
     comentario_incidencia: Optional[str] = None
 
-class BitacoraGeneralCommentBase(BaseModel):
-    campana_id: int
-    comentario: Optional[str] = None
+# RENOMBRADO Y SIMPLIFICADO: El schema para crear un comentario ahora solo necesita el texto.
+class ComentarioGeneralBitacoraCreate(BaseModel):
+    comentario: str
 
-class BitacoraGeneralCommentUpdate(BaseModel):
-    comentario: Optional[str] = None
+# ELIMINADO: El schema de actualización ya no es necesario, no permitiremos editar comentarios.
+# class BitacoraGeneralCommentUpdate(BaseModel):
+#     comentario: str
 
 class TareaGeneradaPorAvisoBase(BaseModel):
     titulo: str
@@ -106,7 +102,6 @@ class TareaGeneradaPorAvisoBase(BaseModel):
     progreso: ProgresoTarea = ProgresoTarea.PENDIENTE
     analista_asignado_id: int
     aviso_origen_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None
 
 class TareaGeneradaPorAvisoUpdate(BaseModel):
     titulo: Optional[str] = None
@@ -114,8 +109,6 @@ class TareaGeneradaPorAvisoUpdate(BaseModel):
     fecha_vencimiento: Optional[datetime] = None
     progreso: Optional[ProgresoTarea] = None
     analista_asignado_id: Optional[int] = None
-    aviso_origen_id: Optional[int] = None
-    fecha_finalizacion: Optional[datetime] = None
 
 class HistorialEstadoTareaBase(BaseModel):
     old_progreso: Optional[ProgresoTarea] = None
@@ -124,39 +117,43 @@ class HistorialEstadoTareaBase(BaseModel):
     tarea_campana_id: Optional[int] = None
     tarea_generada_id: Optional[int] = None
 
+# --- Schemas de Respuesta (para devolver datos desde la API) ---
 
-# --- Simple Schemas (Para romper dependencias circulares en la salida) ---
 class AnalistaSimple(BaseModel):
     id: int
     nombre: str
     apellido: str
     email: EmailStr
-    bms_id: int
     role: UserRole
-    esta_activo: bool
-    fecha_creacion: datetime
     class Config:
         from_attributes = True
 
-class AnalistaMe(BaseModel):
+class AnalistaMe(AnalistaBase):
     id: int
-    nombre: str
-    apellido: str
-    email: EmailStr
-    bms_id: int
-    role: UserRole
-    esta_activo: bool
-    fecha_creacion: datetime
-    campanas_asignadas: List["CampanaSimple"] = []
     class Config:
         from_attributes = True
 
+# NUEVO: Schema de respuesta para el nuevo modelo de comentarios
+class ComentarioGeneralBitacora(BaseModel):
+    id: int
+    comentario: str
+    fecha_creacion: datetime
+    autor: AnalistaSimple # Incluimos la información del autor
+    class Config:
+        from_attributes = True
 
 class CampanaSimple(BaseModel):
     id: int
     nombre: str
-    fecha_inicio: Optional[datetime] = None
-    fecha_fin: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
+class Campana(CampanaBase):
+    id: int
+    fecha_creacion: datetime
+    analistas_asignados: List[AnalistaSimple] = []
+    # CAMBIO: La respuesta de la campaña ahora incluye una lista de los nuevos comentarios
+    comentarios_generales: List[ComentarioGeneralBitacora] = []
     class Config:
         from_attributes = True
 
@@ -164,47 +161,8 @@ class TareaSimple(BaseModel):
     id: int
     titulo: str
     progreso: ProgresoTarea
-    fecha_vencimiento: datetime
-    fecha_finalizacion: Optional[datetime] = None
     class Config:
         from_attributes = True
-
-class TareaGeneradaPorAvisoSimple(BaseModel):
-    id: int
-    titulo: str
-    progreso: ProgresoTarea
-    fecha_vencimiento: Optional[datetime] = None
-    fecha_finalizacion: Optional[datetime] = None
-    class Config:
-        from_attributes = True
-
-class HistorialEstadoTareaSimple(BaseModel):
-    id: int
-    old_progreso: Optional[ProgresoTarea] = None
-    new_progreso: ProgresoTarea
-    timestamp: datetime
-    changed_by_analista_id: int
-    tarea_campana_id: Optional[int] = None
-    tarea_generada_id: Optional[int] = None
-    class Config:
-        from_attributes = True
-
-
-class TareaListOutput(BaseModel):
-    id: int
-    titulo: str
-    descripcion: Optional[str] = None
-    fecha_vencimiento: datetime
-    progreso: ProgresoTarea
-    analista_id: Optional[int] = None
-    campana_id: Optional[int] = None
-    fecha_creacion: datetime
-    fecha_finalizacion: Optional[datetime] = None
-    analista: Optional[AnalistaSimple] = None
-    campana: Optional[CampanaSimple] = None
-    class Config:
-        from_attributes = True
-
 
 class ChecklistItemSimple(BaseModel):
     id: int
@@ -213,130 +171,78 @@ class ChecklistItemSimple(BaseModel):
     class Config:
         from_attributes = True
 
-class ComentarioCampanaSimple(BaseModel):
+class HistorialEstadoTareaSimple(BaseModel):
     id: int
-    contenido: str
-    fecha_creacion: datetime
-    analista_id: int
-    campana_id: int
-    class Config:
-        from_attributes = True
-
-class AvisoSimple(BaseModel):
-    id: int
-    titulo: str
-    contenido: str
-    fecha_creacion: datetime
-    creador_id: int
-    campana_id: Optional[int] = None
-    requiere_tarea: bool
-    fecha_vencimiento_tarea: Optional[datetime] = None
-    class Config:
-        from_attributes = True
-
-class AvisoListOutput(BaseModel):
-    id: int
-    titulo: str
-    contenido: str
-    fecha_vencimiento: Optional[datetime] = None
-    fecha_creacion: datetime
-    creador_id: int
-    campana_id: Optional[int] = None
-    creador: AnalistaSimple
-    campana: Optional[CampanaSimple] = None
-    requiere_tarea: bool
-    fecha_vencimiento_tarea: Optional[datetime] = None
-    class Config:
-        from_attributes = True
-
-
-class AcuseReciboAvisoSimple(BaseModel):
-    id: int
-    aviso_id: int
-    analista_id: int
-    fecha_acuse: datetime
-    class Config:
-        from_attributes = True
-
-class BitacoraEntrySimple(BaseModel):
-    id: int
-    fecha: date
-    hora: time
-    comentario: Optional[str] = None
-    es_incidencia: Optional[bool] = False
-    tipo_incidencia: Optional[TipoIncidencia] = None
-    comentario_incidencia: Optional[str] = None
-    fecha_creacion: datetime
-    fecha_ultima_actualizacion: datetime
-    class Config:
-        from_attributes = True
-
-class BitacoraGeneralCommentSimple(BaseModel):
-    id: int
-    comentario: Optional[str] = None
-    fecha_creacion: datetime
-    fecha_ultima_actualizacion: datetime
-    class Config:
-        from_attributes = True
-
-
-# --- Full Schemas (Output con relaciones seleccionadas usando los modelos "Simple") ---
-class Analista(AnalistaBase):
-    id: int
-    fecha_creacion: datetime
-    esta_activo: bool
-    campanas_asignadas: List["CampanaSimple"] = []
-    tareas: List["TareaSimple"] = []
-    avisos_creados: List["AvisoSimple"] = []
-    acuses_recibo_avisos: List["AcuseReciboAvisoSimple"] = []
-    tareas_generadas_por_avisos: List["TareaGeneradaPorAvisoSimple"] = []
-    class Config:
-        from_attributes = True
-
-class Campana(CampanaBase):
-    id: int
-    fecha_creacion: datetime
-    analistas_asignados: List["AnalistaSimple"] = []
-    tareas: List["TareaSimple"] = []
-    comentarios: List["ComentarioCampanaSimple"] = []
-    avisos: List["AvisoSimple"] = []
-    bitacora_entries: List["BitacoraEntrySimple"] = []
-    bitacora_general_comment: Optional["BitacoraGeneralCommentSimple"] = None
+    old_progreso: Optional[ProgresoTarea]
+    new_progreso: ProgresoTarea
+    timestamp: datetime
+    changed_by_analista: AnalistaSimple
     class Config:
         from_attributes = True
 
 class Tarea(TareaBase):
     id: int
     fecha_creacion: datetime
+    fecha_finalizacion: Optional[datetime] = None
     analista: Optional[AnalistaSimple] = None
-    campana: Optional["CampanaSimple"] = None
-    checklist_items: List["ChecklistItemSimple"] = []
-    historial_estados: List["HistorialEstadoTareaSimple"] = []
+    campana: Optional[CampanaSimple] = None
+    checklist_items: List[ChecklistItemSimple] = []
+    historial_estados: List[HistorialEstadoTareaSimple] = []
     class Config:
         from_attributes = True
 
-class TareaGeneradaPorAviso(TareaGeneradaPorAvisoBase):
+class TareaListOutput(BaseModel):
     id: int
-    fecha_creacion: datetime
+    titulo: str
     progreso: ProgresoTarea
-    analista_asignado: "AnalistaSimple"
-    aviso_origen: Optional["AvisoSimple"] = None
-    historial_estados: List["HistorialEstadoTareaSimple"] = []
+    fecha_vencimiento: datetime
+    analista: Optional[AnalistaSimple] = None
+    campana: Optional[CampanaSimple] = None
     class Config:
         from_attributes = True
 
 class ChecklistItem(ChecklistItemBase):
     id: int
     fecha_creacion: datetime
-    tarea: "TareaSimple"
+    tarea: TareaSimple
     class Config:
         from_attributes = True
 
-class ComentarioCampana(ComentarioCampanaBase):
+# ELIMINADO: ComentarioCampana y sus derivados ya no son necesarios.
+# class ComentarioCampanaSimple(BaseModel):
+#     id: int
+#     contenido: str
+#     fecha_creacion: datetime
+#     class Config:
+#         from_attributes = True
+#
+# class ComentarioCampana(ComentarioCampanaBase):
+#     id: int
+#     fecha_creacion: datetime
+#     campana: "CampanaSimple"
+#     analista: "AnalistaSimple"
+#     class Config:
+#         from_attributes = True
+
+class AvisoSimple(BaseModel):
     id: int
-    fecha_creacion: datetime
-    campana: "CampanaSimple"
-    analista: "AnalistaSimple"
+    titulo: str
+    fecha_vencimiento: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
+class AcuseReciboAvisoSimple(BaseModel):
+    id: int
+    fecha_acuse: datetime
+    analista: AnalistaSimple
+    class Config:
+        from_attributes = True
+
+class TareaGeneradaPorAvisoSimple(BaseModel):
+    id: int
+    titulo: str
+    progreso: ProgresoTarea
+    fecha_vencimiento: Optional[datetime] = None
     class Config:
         from_attributes = True
 
@@ -366,13 +272,14 @@ class BitacoraEntry(BitacoraEntryBase):
     class Config:
         from_attributes = True
 
-class BitacoraGeneralComment(BitacoraGeneralCommentBase):
-    id: int
-    fecha_creacion: datetime
-    fecha_ultima_actualizacion: datetime
-    campana: "CampanaSimple"
-    class Config:
-        from_attributes = True
+# ELIMINADO: El schema BitacoraGeneralComment ya no se usa.
+# class BitacoraGeneralComment(BitacoraGeneralCommentBase):
+#     id: int
+#     fecha_creacion: datetime
+#     fecha_ultima_actualizacion: datetime
+#     campana: "CampanaSimple"
+#     class Config:
+#         from_attributes = True
 
 class HistorialEstadoTarea(HistorialEstadoTareaBase):
     id: int
@@ -381,11 +288,47 @@ class HistorialEstadoTarea(HistorialEstadoTareaBase):
     class Config:
         from_attributes = True
 
-# Para autenticación
+class TareaGeneradaPorAviso(TareaGeneradaPorAvisoBase):
+    id: int
+    fecha_creacion: datetime
+    fecha_finalizacion: Optional[datetime] = None
+    analista_asignado: AnalistaSimple
+    aviso_origen: Optional[AvisoSimple] = None
+    historial_estados: List[HistorialEstadoTareaSimple] = []
+    class Config:
+        from_attributes = True
+
+class Analista(AnalistaBase):
+    id: int
+    fecha_creacion: datetime
+    campanas_asignadas: List[CampanaSimple] = []
+    tareas: List[TareaSimple] = []
+    avisos_creados: List[AvisoSimple] = []
+    acuses_recibo_avisos: List[AcuseReciboAvisoSimple] = []
+    tareas_generadas_por_avisos: List[TareaGeneradaPorAvisoSimple] = []
+    class Config:
+        from_attributes = True
+
 class Token(BaseModel):
     access_token: str
     token_type: str
 
 class TokenData(BaseModel):
     email: Optional[str] = None
-    role: Optional[UserRole] = None
+
+class AvisoListOutput(BaseModel):
+    id: int
+    titulo: str
+    fecha_vencimiento: Optional[datetime] = None
+    creador: AnalistaSimple
+    campana: Optional[CampanaSimple] = None
+    class Config:
+        from_attributes = True
+
+# --- Forward References Update ---
+# Esto es para que Pydantic pueda resolver las referencias circulares
+Campana.model_rebuild()
+Aviso.model_rebuild()
+AcuseReciboAviso.model_rebuild()
+# ELIMINADO: BitacoraGeneralComment.model_rebuild()
+# ELIMINADO: ComentarioCampana.model_rebuild()

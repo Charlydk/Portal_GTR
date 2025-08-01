@@ -4,14 +4,16 @@ import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { Card, Form, Button, Alert, Spinner, Table, Badge, Row, Col } from 'react-bootstrap';
 import RegistroIncidenciaForm from './RegistroIncidenciaForm';
+// NUEVO: Importamos el nuevo componente de historial
+import HistorialComentarios from './HistorialComentarios';
 
 const BitacoraCampana = ({ campanaId, campanaNombre }) => {
   const { user, authToken, loading: authLoading } = useAuth();
   const [bitacoraEntries, setBitacoraEntries] = useState([]);
   
-  // Estados separados para el comentario
-  const [displayedComment, setDisplayedComment] = useState(''); // Para MOSTRAR el comentario guardado
-  const [commentInput, setCommentInput] = useState(''); // Para CONTROLAR el <textarea>
+  // ELIMINADO: Estados para el comentario general único
+  // const [displayedComment, setDisplayedComment] = useState('');
+  // const [commentInput, setCommentInput] = useState('');
   
   const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
   const [newEntryComment, setNewEntryComment] = useState('');
@@ -20,7 +22,9 @@ const BitacoraCampana = ({ campanaId, campanaNombre }) => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [submittingEntry, setSubmittingEntry] = useState(false);
-  const [submittingComment, setSubmittingComment] = useState(false);
+  
+  // ELIMINADO: Estado de envío para el comentario general
+  // const [submittingComment, setSubmittingComment] = useState(false);
 
   const generarOpcionesHorario = () => {
     const opciones = [];
@@ -33,8 +37,6 @@ const BitacoraCampana = ({ campanaId, campanaNombre }) => {
     }
     return opciones;
   };
-
-  const canManageGeneralComment = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE' || user.role === 'ANALISTA');
 
   const fetchBitacoraEntries = useCallback(async () => {
     if (!authToken || !campanaId || !currentDate) {
@@ -59,33 +61,16 @@ const BitacoraCampana = ({ campanaId, campanaNombre }) => {
     }
   }, [authToken, campanaId, currentDate]);
 
-  const fetchGeneralComment = useCallback(async () => {
-    if (!authToken || !campanaId) return;
-    try {
-      const response = await fetch(`${API_BASE_URL}/campanas/${campanaId}/bitacora_general_comment`, {
-        headers: { 'Authorization': `Bearer ${authToken}` },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const savedComment = data ? data.comentario || '' : '';
-        setDisplayedComment(savedComment);
-        setCommentInput(savedComment);
-      } else if (response.status !== 404) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "No se pudo cargar el comentario general.");
-      }
-    } catch (err) {
-      console.error("Error fetching general comment:", err);
-      setError(err.message);
-    }
-  }, [authToken, campanaId]);
+  // ELIMINADO: La función fetchGeneralComment ya no es necesaria
+  // const fetchGeneralComment = useCallback(async () => { ... });
 
   useEffect(() => {
     if (!authLoading && user && campanaId) {
       setLoading(true);
-      Promise.all([fetchBitacoraEntries(), fetchGeneralComment()]).finally(() => setLoading(false));
+      // SIMPLIFICADO: Solo cargamos las entradas de la bitácora diaria
+      fetchBitacoraEntries().finally(() => setLoading(false));
     }
-  }, [authLoading, user, campanaId, fetchBitacoraEntries, fetchGeneralComment]);
+  }, [authLoading, user, campanaId, fetchBitacoraEntries]);
 
   const handleNewEntrySubmit = async (e) => {
     e.preventDefault();
@@ -121,30 +106,8 @@ const BitacoraCampana = ({ campanaId, campanaNombre }) => {
     }
   };
 
-  const handleGeneralCommentSubmit = async (e) => {
-    e.preventDefault();
-    setSubmittingComment(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const response = await fetch(`${API_BASE_URL}/campanas/${campanaId}/bitacora_general_comment`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-        body: JSON.stringify({ comentario: commentInput }),
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || `Error al actualizar comentario.`);
-      }
-      setSuccess('Comentario general actualizado con éxito!');
-      fetchGeneralComment(); 
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmittingComment(false);
-      setTimeout(() => { setSuccess(null); setError(null); }, 5000);
-    }
-  };
+  // ELIMINADO: La función handleGeneralCommentSubmit ya no es necesaria
+  // const handleGeneralCommentSubmit = async (e) => { ... };
 
   const handleIncidenciaSuccess = () => {
     setSuccess('Incidencia registrada con éxito!');
@@ -179,32 +142,11 @@ const BitacoraCampana = ({ campanaId, campanaNombre }) => {
           </Col>
         </Form.Group>
       </Card>
+      
+      {/* NUEVO: Renderizamos el componente de historial de comentarios */}
+      <HistorialComentarios campanaId={campanaId} />
 
-      {displayedComment && (
-        <Card className="mb-4 bg-light shadow-sm">
-            <Card.Header as="h5">Comentario General del Día</Card.Header>
-            <Card.Body>
-                <blockquote className="blockquote mb-0">
-                    <p>{displayedComment}</p>
-                </blockquote>
-            </Card.Body>
-        </Card>
-      )}
-
-      {canManageGeneralComment && (
-        <Card className="shadow-sm p-4 mb-4">
-          <h4 className="mb-4 text-primary">Comentario General de la Bitácora</h4>
-          <Form onSubmit={handleGeneralCommentSubmit}>
-            <Form.Group className="mb-3">
-              <Form.Label htmlFor="generalComment">Editar Comentario:</Form.Label>
-              <Form.Control as="textarea" id="generalComment" rows={3} value={commentInput} onChange={(e) => setCommentInput(e.target.value)} disabled={submittingComment} />
-            </Form.Group>
-            <Button type="submit" variant="info" disabled={submittingComment}>
-              {submittingComment ? <Spinner as="span" animation="border" size="sm" /> : 'Guardar Comentario General'}
-            </Button>
-          </Form>
-        </Card>
-      )}
+      {/* ELIMINADO: Se borran las dos secciones <Card> que manejaban el comentario general único */}
 
       <Card className="shadow-sm p-4 mb-4">
         <h4 className="mb-4 text-primary">Registrar Observaciones de franja</h4>
