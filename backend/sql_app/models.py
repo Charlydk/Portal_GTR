@@ -1,15 +1,14 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Date, Time, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum as SQLEnum, Date, Time, func, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Table
 from datetime import datetime
 
-# --- Importamos los Enums desde el archivo central 'enums.py' ---
-from enums import UserRole, ProgresoTarea, TipoIncidencia
+# Ahora importamos todos los Enums desde nuestro nuevo archivo central
+from enums import UserRole, ProgresoTarea, TipoIncidencia, EstadoIncidencia
 
 Base = declarative_base()
 
-# Tabla de asociación para Analistas y Campañas (muchos a muchos)
 analistas_campanas = Table(
     'analistas_campanas',
     Base.metadata,
@@ -35,8 +34,11 @@ class Analista(Base):
     avisos_creados = relationship("Aviso", back_populates="creador")
     acuses_recibo_avisos = relationship("AcuseReciboAviso", back_populates="analista")
     tareas_generadas_por_avisos = relationship("TareaGeneradaPorAviso", back_populates="analista_asignado")
-    # NUEVO: Relación para los comentarios generales que ha hecho el analista
     comentarios_generales_bitacora = relationship("ComentarioGeneralBitacora", back_populates="autor")
+    
+    # NUEVO: Relaciones con el nuevo módulo de incidencias
+    incidencias_creadas = relationship("Incidencia", back_populates="creador", foreign_keys='Incidencia.creador_id')
+    actualizaciones_incidencia_hechas = relationship("ActualizacionIncidencia", back_populates="autor")
 
 
 class Campana(Base):
@@ -53,9 +55,10 @@ class Campana(Base):
     tareas = relationship("Tarea", back_populates="campana", cascade="all, delete-orphan")
     avisos = relationship("Aviso", back_populates="campana", cascade="all, delete-orphan")
     bitacora_entries = relationship("BitacoraEntry", back_populates="campana", cascade="all, delete-orphan")
-    # CAMBIO: La relación ahora es a la nueva tabla y espera una lista de comentarios
     comentarios_generales = relationship("ComentarioGeneralBitacora", back_populates="campana", cascade="all, delete-orphan")
-
+    
+    # NUEVO: Relación con las incidencias de la campaña
+    incidencias = relationship("Incidencia", back_populates="campana", cascade="all, delete-orphan")
 
 class Tarea(Base):
     __tablename__ = "tareas"
@@ -86,7 +89,17 @@ class ChecklistItem(Base):
     tarea_id = Column(Integer, ForeignKey("tareas.id"), nullable=False)
     tarea = relationship("Tarea", back_populates="checklist_items")
 
-# ELIMINADO: El modelo ComentarioCampana se elimina para evitar confusión. Usaremos ComentarioGeneralBitacora.
+class ComentarioGeneralBitacora(Base):
+    __tablename__ = "comentarios_generales_bitacora"
+    id = Column(Integer, primary_key=True, index=True)
+    comentario = Column(String, nullable=False)
+    fecha_creacion = Column(DateTime, default=func.now())
+    
+    campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
+    autor_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
+
+    campana = relationship("Campana", back_populates="comentarios_generales")
+    autor = relationship("Analista", back_populates="comentarios_generales_bitacora")
 
 class Aviso(Base):
     __tablename__ = "avisos"
@@ -123,32 +136,11 @@ class BitacoraEntry(Base):
     fecha = Column(Date, nullable=False)
     hora = Column(Time, nullable=False)
     comentario = Column(String, nullable=True)
-    es_incidencia = Column(Boolean, default=False)
-    tipo_incidencia = Column(SQLEnum(TipoIncidencia, name="tipoincidencia"), nullable=True)
-    comentario_incidencia = Column(String, nullable=True)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_ultima_actualizacion = Column(DateTime, default=func.now(), onupdate=func.now())
     
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
     campana = relationship("Campana", back_populates="bitacora_entries")
-
-# RENOMBRADO Y MODIFICADO: De 'BitacoraGeneralComment' a 'ComentarioGeneralBitacora'
-class ComentarioGeneralBitacora(Base):
-    __tablename__ = "comentarios_generales_bitacora"
-    id = Column(Integer, primary_key=True, index=True)
-    comentario = Column(String, nullable=False)
-    fecha_creacion = Column(DateTime, default=func.now())
-    
-    # CAMBIO: Ya no es único. Ahora es una clave foránea simple.
-    campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
-    # NUEVO: Guardamos quién hizo el comentario
-    autor_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
-
-    # CAMBIO: La relación apunta a Campana
-    campana = relationship("Campana", back_populates="comentarios_generales")
-    # NUEVO: Relación para obtener la información del autor
-    autor = relationship("Analista", back_populates="comentarios_generales_bitacora")
-
 
 class TareaGeneradaPorAviso(Base):
     __tablename__ = "tareas_generadas_por_avisos"
@@ -182,3 +174,41 @@ class HistorialEstadoTarea(Base):
 
     tarea_campana_rel = relationship("Tarea", back_populates="historial_estados")
     tarea_generada_rel = relationship("TareaGeneradaPorAviso", back_populates="historial_estados")
+
+# --- NUEVOS MODELOS PARA EL MÓDULO DE INCIDENCIAS ---
+
+class Incidencia(Base):
+    __tablename__ = "incidencias"
+
+    id = Column(Integer, primary_key=True, index=True)
+    titulo = Column(String, nullable=False)
+    descripcion_inicial = Column(Text, nullable=False)
+    herramienta_afectada = Column(String, nullable=True)
+    indicador_afectado = Column(String, nullable=True)
+    
+    tipo = Column(SQLEnum(TipoIncidencia, name="tipoincidencia_inc"), nullable=False)
+    estado = Column(SQLEnum(EstadoIncidencia, name="estadoincidencia"), nullable=False, default=EstadoIncidencia.ABIERTA)
+    
+    fecha_apertura = Column(DateTime, default=func.now())
+    fecha_cierre = Column(DateTime, nullable=True)
+
+    creador_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
+    campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
+
+    creador = relationship("Analista", back_populates="incidencias_creadas", foreign_keys=[creador_id])
+    campana = relationship("Campana", back_populates="incidencias")
+    
+    actualizaciones = relationship("ActualizacionIncidencia", back_populates="incidencia", cascade="all, delete-orphan")
+
+class ActualizacionIncidencia(Base):
+    __tablename__ = "actualizaciones_incidencia"
+
+    id = Column(Integer, primary_key=True, index=True)
+    comentario = Column(Text, nullable=False)
+    fecha_actualizacion = Column(DateTime, default=func.now())
+
+    incidencia_id = Column(Integer, ForeignKey("incidencias.id"), nullable=False)
+    autor_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
+
+    incidencia = relationship("Incidencia", back_populates="actualizaciones")
+    autor = relationship("Analista", back_populates="actualizaciones_incidencia_hechas")

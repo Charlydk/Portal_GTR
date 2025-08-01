@@ -3,21 +3,21 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { Container, Card, ListGroup, Button, Spinner, Alert, Row, Col, Tab, Nav } from 'react-bootstrap'; // Asegúrate de que Tab y Nav estén importados
-import BitacoraCampana from '../components/BitacoraCampana'; // Asegúrate de que BitacoraCampana esté importado
+import { Container, Card, ListGroup, Button, Spinner, Alert, Row, Col, Tab, Nav, Badge } from 'react-bootstrap';
+import BitacoraCampana from '../components/BitacoraCampana';
+import ListaIncidencias from '../components/ListaIncidencias';
 
 function DetalleCampanaPage() {
     const { id } = useParams();
-    const navigate = useNavigate();
+    const navigate = useNavigate(); // Esta variable ahora se usa correctamente
     const { authToken, user, refreshUser } = useAuth();
 
     const [campana, setCampana] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
-    const [key, setKey] = useState('detalles'); // Estado para controlar la pestaña activa
+    const [key, setKey] = useState('detalles');
 
-    // Función para cargar los detalles de la campana
     const fetchCampanaDetails = useCallback(async () => {
         if (!authToken) {
             setLoading(false);
@@ -29,25 +29,15 @@ function DetalleCampanaPage() {
         setError(null);
         try {
             const response = await fetch(`${API_BASE_URL}/campanas/${id}`, {
-                headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                },
+                headers: { 'Authorization': `Bearer ${authToken}` },
             });
             if (!response.ok) {
-                if (response.status === 401) {
-                    throw new Error("No autorizado. Por favor, inicie sesión.");
-                }
-                if (response.status === 403) {
-                    throw new Error("Acceso denegado. No tiene los permisos necesarios para ver esta campana.");
-                }
                 throw new Error(`Error al cargar la campana: ${response.statusText}`);
             }
             const data = await response.json();
             setCampana(data);
-            console.log("Datos de la campana recibidos en el frontend:", data);
         } catch (err) {
-            console.error("Error al obtener detalles de la campana:", err);
-            setError(err.message || "No se pudo cargar la información de la campana.");
+            setError(err.message);
         } finally {
             setLoading(false);
         }
@@ -56,78 +46,41 @@ function DetalleCampanaPage() {
     useEffect(() => {
         fetchCampanaDetails();
     }, [fetchCampanaDetails]);
-
-    // Lógica para asignar/desasignar al analista actual
+    
     const handleAssignUnassign = async (action) => {
         if (!user || !authToken || isProcessing) return;
-
         setIsProcessing(true);
         setError(null);
-
         const endpoint = `${API_BASE_URL}/analistas/${user.id}/campanas/${campana.id}`;
         const method = action === 'assign' ? 'POST' : 'DELETE';
-
         try {
             const response = await fetch(endpoint, {
                 method: method,
-                headers: {
-                    'Authorization': `Bearer ${authToken}`,
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Authorization': `Bearer ${authToken}` },
             });
-
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.detail || `Error al ${action === 'assign' ? 'asignarse' : 'desasignarse'} de la campana: ${response.statusText}`);
+                throw new Error(errorData.detail || 'Error en la operación');
             }
-
-            await fetchCampanaDetails(); // Recargar los detalles de la campana
-            await refreshUser(); // Refrescar el perfil del usuario en el contexto
-
+            await fetchCampanaDetails();
+            await refreshUser();
         } catch (err) {
-            console.error(`Error al ${action === 'assign' ? 'asignarse' : 'desasignarse'}:`, err);
-            setError(err.message || `No se pudo ${action === 'assign' ? 'asignar' : 'desasignar'} la campana.`);
+            setError(err.message);
         } finally {
             setIsProcessing(false);
         }
     };
 
     if (loading) {
-        return (
-            <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
-                <Spinner animation="border" role="status">
-                    <span className="visually-hidden">Cargando detalles de la campana...</span>
-                </Spinner>
-                <p className="ms-3 text-muted">Cargando detalles de la campana...</p>
-            </Container>
-        );
+        return <Container className="text-center py-5"><Spinner animation="border" /></Container>;
     }
 
     if (error) {
-        return (
-            <Container className="mt-4">
-                <Alert variant="danger">
-                    <Alert.Heading>¡Error!</Alert.Heading>
-                    <p>{error}</p>
-                    {!authToken && (
-                        <Link to="/login" className="btn btn-primary mt-3">Ir a Iniciar Sesión</Link>
-                    )}
-                    <Button variant="secondary" onClick={() => navigate('/campanas')} className="ms-2">Volver a Campanas</Button>
-                </Alert>
-            </Container>
-        );
+        return <Container className="mt-4"><Alert variant="danger">{error}</Alert></Container>;
     }
 
     if (!campana) {
-        return (
-            <Container className="mt-4">
-                <Alert variant="info">
-                    <Alert.Heading>Campaña no encontrada</Alert.Heading>
-                    <p>La campaña que buscas no existe o no tienes permiso para verla.</p>
-                    <Button variant="primary" onClick={() => navigate('/campanas')}>Volver a Campanas</Button>
-                </Alert>
-            </Container>
-        );
+        return <Container className="mt-4"><Alert variant="info">Campaña no encontrada.</Alert></Container>;
     }
 
     const canManageCampana = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
@@ -138,10 +91,9 @@ function DetalleCampanaPage() {
         <Container className="py-5">
             <Card className="shadow-lg">
                 <Card.Header as="h2" className="bg-primary text-white text-center">
-                    Detalles de la Campana: {campana.nombre}
+                    Detalles de la Campaña: {campana.nombre}
                 </Card.Header>
                 <Card.Body>
-                    {/* INICIO DE LA ESTRUCTURA DE PESTAÑAS */}
                     <Tab.Container id="campana-tabs" activeKey={key} onSelect={(k) => setKey(k)}>
                         <Nav variant="tabs" className="mb-3">
                             <Nav.Item>
@@ -150,109 +102,46 @@ function DetalleCampanaPage() {
                             <Nav.Item>
                                 <Nav.Link eventKey="bitacora">Bitácora</Nav.Link>
                             </Nav.Item>
+                            <Nav.Item>
+                                <Nav.Link eventKey="incidencias">
+                                    Incidencias <Badge pill bg="danger">{campana.incidencias?.length || 0}</Badge>
+                                </Nav.Link>
+                            </Nav.Item>
                         </Nav>
                         <Tab.Content>
                             <Tab.Pane eventKey="detalles">
-                                <Row className="mb-3">
-                                    <Col md={6}>
-                                        <p><strong>Descripción:</strong> {campana.descripcion || 'Sin descripción'}</p>
-                                        <p><strong>Fecha de Inicio:</strong> {campana.fecha_inicio ? new Date(campana.fecha_inicio).toLocaleDateString() : 'N/A'}</p>
-                                        <p><strong>Fecha de Fin:</strong> {campana.fecha_fin ? new Date(campana.fecha_fin).toLocaleDateString() : 'N/A'}</p>
-                                        <p><strong>Fecha de Creación:</strong> {new Date(campana.fecha_creacion).toLocaleString()}</p>
+                                <Row>
+                                    <Col md={8}>
+                                        <p><strong>Descripción:</strong> {campana.descripcion || 'N/A'}</p>
+                                        <p><strong>Analistas Asignados:</strong> {campana.analistas_asignados?.length || 0}</p>
                                     </Col>
-                                    <Col md={6} className="d-flex align-items-center justify-content-end">
+                                    <Col md={4} className="text-md-end">
                                         {isAnalyst && (
                                             isAssignedToThisCampana ? (
-                                                <Button
-                                                    variant="danger"
-                                                    onClick={() => handleAssignUnassign('unassign')}
-                                                    disabled={isProcessing}
-                                                    className="me-2"
-                                                >
-                                                    {isProcessing ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Desasignarme de esta Campana'}
+                                                <Button variant="danger" onClick={() => handleAssignUnassign('unassign')} disabled={isProcessing}>
+                                                    {isProcessing ? <Spinner size="sm" /> : 'Desasignarme'}
                                                 </Button>
                                             ) : (
-                                                <Button
-                                                    variant="success"
-                                                    onClick={() => handleAssignUnassign('assign')}
-                                                    disabled={isProcessing}
-                                                    className="me-2"
-                                                >
-                                                    {isProcessing ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Asignarme a esta Campana'}
+                                                <Button variant="success" onClick={() => handleAssignUnassign('assign')} disabled={isProcessing}>
+                                                    {isProcessing ? <Spinner size="sm" /> : 'Asignarme'}
                                                 </Button>
                                             )
                                         )}
                                     </Col>
                                 </Row>
-
-                                <hr />
-
-                                {/* Sección de Analistas Asignados */}
-                                <h4>Analistas Asignados ({campana.analistas_asignados?.length || 0})</h4>
-                                {campana.analistas_asignados && campana.analistas_asignados.length > 0 ? (
-                                    <ListGroup variant="flush" className="mb-4">
-                                        {campana.analistas_asignados.map(analyst => (
-                                            <ListGroup.Item key={analyst.id}>
-                                                <Link to={`/analistas/${analyst.id}`} className="text-decoration-none text-dark">
-                                                    {analyst.nombre} {analyst.apellido} ({analyst.email})
-                                                </Link>
-                                            </ListGroup.Item>
-                                        ))}
-                                    </ListGroup>
-                                ) : (
-                                    <p className="text-muted fst-italic mb-4">No hay analistas asignados a esta campana.</p>
-                                )}
-
-                                <hr />
-
-                                {/* Sección de Tareas de la Campana */}
-                                <h4>Tareas de la Campana ({campana.tareas?.length || 0})</h4>
-                                {campana.tareas && campana.tareas.length > 0 ? (
-                                    <ListGroup variant="flush" className="mb-4">
-                                        {campana.tareas.map(task => (
-                                            <ListGroup.Item key={task.id}>
-                                                <Link to={`/tareas/${task.id}`} className="text-decoration-none text-dark">
-                                                    <strong>{task.titulo}</strong> - Progreso: {task.progreso}
-                                                </Link>
-                                            </ListGroup.Item>
-                                        ))}
-                                    </ListGroup>
-                                ) : (
-                                    <p className="text-muted fst-italic mb-4">No hay tareas asociadas a esta campana.</p>
-                                )}
-
-                                <hr />
-
-                                {/* Sección de Avisos de la Campana */}
-                                <h4>Avisos de la Campana ({campana.avisos?.length || 0})</h4>
-                                {campana.avisos && campana.avisos.length > 0 ? (
-                                    <ListGroup variant="flush" className="mb-4">
-                                        {campana.avisos.map(notice => (
-                                            <ListGroup.Item key={notice.id}>
-                                                <Link to={`/avisos/${notice.id}`} className="text-decoration-none text-dark">
-                                                    <strong>{notice.titulo}</strong> - Creado: {new Date(notice.fecha_creacion).toLocaleDateString()}
-                                                </Link>
-                                            </ListGroup.Item>
-                                        ))}
-                                    </ListGroup>
-                                ) : (
-                                    <p className="text-muted fst-italic mb-4">No hay avisos asociados a esta campana.</p>
-                                )}
                             </Tab.Pane>
                             <Tab.Pane eventKey="bitacora">
-                                {/* Renderizar el componente BitacoraCampana aquí */}
-                                <BitacoraCampana
-                                    campanaId={campana.id}
-                                    initialGeneralComment={campana.bitacora_general_comment}
-                                />
+                                <BitacoraCampana campanaId={campana.id} campanaNombre={campana.nombre} />
+                            </Tab.Pane>
+                            <Tab.Pane eventKey="incidencias">
+                                <ListaIncidencias incidencias={campana.incidencias} campanaId={campana.id} />
                             </Tab.Pane>
                         </Tab.Content>
                     </Tab.Container>
-                    {/* FIN DE LA ESTRUCTURA DE PESTAÑAS */}
                 </Card.Body>
                 <Card.Footer className="text-end">
                     <Button variant="secondary" onClick={() => navigate('/campanas')} className="me-2">
-                        Volver a Campanas
+                        Volver a Campañas
                     </Button>
                     {canManageCampana && (
                         <Link to={`/campanas/editar/${campana.id}`} className="btn btn-warning">
