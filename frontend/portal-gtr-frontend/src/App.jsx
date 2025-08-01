@@ -24,6 +24,8 @@ import DetalleTareaPage from './pages/DetalleTareaPage';
 import RegisterPage from './pages/RegisterPage';
 import ListaIncidenciasPage from './pages/ListaIncidenciasPage';
 import DetalleTareaGeneradaPage from './pages/DetalleTareaGeneradaPage';
+import FormularioIncidenciaPage from './pages/FormularioIncidenciaPage';
+import DetalleIncidenciaPage from './pages/DetalleIncidenciaPage';
 
 
 function App() {
@@ -259,7 +261,24 @@ function App() {
                 </PrivateRoute>
               }
             />
- 
+
+            <Route
+              path="/incidencias/crear"
+              element={
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
+                  <FormularioIncidenciaPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/incidencias/:id"
+              element={
+                <PrivateRoute allowedRoles={['ANALISTA', 'SUPERVISOR', 'RESPONSABLE']}>
+                  <DetalleIncidenciaPage />
+                </PrivateRoute>
+              }
+            /> 
+
             {/* Ruta para el caso de página no encontrada */}
             <Route path="*" element={<div>404 - Página no encontrada</div>} />
 

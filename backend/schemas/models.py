@@ -1,8 +1,8 @@
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime, date, time
 from typing import List, Optional
-from enums import UserRole, ProgresoTarea, TipoIncidencia
-from enum import Enum
+# CORRECCIÓN: Importamos TODOS los enums necesarios, incluyendo EstadoIncidencia
+from enums import UserRole, ProgresoTarea, TipoIncidencia, EstadoIncidencia
 
 # --- Schemas Base (para creación y actualización) ---
 
@@ -52,12 +52,6 @@ class ChecklistItemUpdate(BaseModel):
     completado: Optional[bool] = None
     tarea_id: Optional[int] = None
 
-# ELIMINADO: ComentarioCampanaBase y sus derivados ya no son necesarios.
-# class ComentarioCampanaBase(BaseModel):
-#     contenido: str
-#     campana_id: int
-#     analista_id: int
-
 class AvisoBase(BaseModel):
     titulo: str
     contenido: str
@@ -75,25 +69,14 @@ class BitacoraEntryBase(BaseModel):
     fecha: date
     hora: time
     comentario: Optional[str] = None
-    es_incidencia: bool = False
-    tipo_incidencia: Optional[TipoIncidencia] = None
-    comentario_incidencia: Optional[str] = None
 
 class BitacoraEntryUpdate(BaseModel):
     fecha: Optional[date] = None
     hora: Optional[time] = None
     comentario: Optional[str] = None
-    es_incidencia: Optional[bool] = None
-    tipo_incidencia: Optional[TipoIncidencia] = None
-    comentario_incidencia: Optional[str] = None
 
-# RENOMBRADO Y SIMPLIFICADO: El schema para crear un comentario ahora solo necesita el texto.
 class ComentarioGeneralBitacoraCreate(BaseModel):
     comentario: str
-
-# ELIMINADO: El schema de actualización ya no es necesario, no permitiremos editar comentarios.
-# class BitacoraGeneralCommentUpdate(BaseModel):
-#     comentario: str
 
 class TareaGeneradaPorAvisoBase(BaseModel):
     titulo: str
@@ -117,6 +100,22 @@ class HistorialEstadoTareaBase(BaseModel):
     tarea_campana_id: Optional[int] = None
     tarea_generada_id: Optional[int] = None
 
+# --- NUEVOS SCHEMAS PARA INCIDENCIAS ---
+
+class ActualizacionIncidenciaBase(BaseModel):
+    comentario: str
+
+class IncidenciaCreate(BaseModel):
+    titulo: str
+    descripcion_inicial: str
+    herramienta_afectada: Optional[str] = None
+    indicador_afectado: Optional[str] = None
+    tipo: TipoIncidencia
+    campana_id: int
+
+class IncidenciaUpdate(BaseModel):
+    estado: EstadoIncidencia
+
 # --- Schemas de Respuesta (para devolver datos desde la API) ---
 
 class AnalistaSimple(BaseModel):
@@ -128,32 +127,17 @@ class AnalistaSimple(BaseModel):
     class Config:
         from_attributes = True
 
-class AnalistaMe(AnalistaBase):
-    id: int
-    class Config:
-        from_attributes = True
-
-# NUEVO: Schema de respuesta para el nuevo modelo de comentarios
 class ComentarioGeneralBitacora(BaseModel):
     id: int
     comentario: str
     fecha_creacion: datetime
-    autor: AnalistaSimple # Incluimos la información del autor
+    autor: AnalistaSimple
     class Config:
         from_attributes = True
 
 class CampanaSimple(BaseModel):
     id: int
     nombre: str
-    class Config:
-        from_attributes = True
-
-class Campana(CampanaBase):
-    id: int
-    fecha_creacion: datetime
-    analistas_asignados: List[AnalistaSimple] = []
-    # CAMBIO: La respuesta de la campaña ahora incluye una lista de los nuevos comentarios
-    comentarios_generales: List[ComentarioGeneralBitacora] = []
     class Config:
         from_attributes = True
 
@@ -177,6 +161,82 @@ class HistorialEstadoTareaSimple(BaseModel):
     new_progreso: ProgresoTarea
     timestamp: datetime
     changed_by_analista: AnalistaSimple
+    class Config:
+        from_attributes = True
+
+class AvisoSimple(BaseModel):
+    id: int
+    titulo: str
+    fecha_vencimiento: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
+class AcuseReciboAvisoSimple(BaseModel):
+    id: int
+    fecha_acuse: datetime
+    analista: AnalistaSimple
+    class Config:
+        from_attributes = True
+
+class TareaGeneradaPorAvisoSimple(BaseModel):
+    id: int
+    titulo: str
+    progreso: ProgresoTarea
+    fecha_vencimiento: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
+class BitacoraEntry(BitacoraEntryBase):
+    id: int
+    fecha_creacion: datetime
+    fecha_ultima_actualizacion: datetime
+    campana: "CampanaSimple"
+    class Config:
+        from_attributes = True
+
+# --- NUEVOS SCHEMAS DE RESPUESTA PARA INCIDENCIAS ---
+
+class ActualizacionIncidencia(ActualizacionIncidenciaBase):
+    id: int
+    fecha_actualizacion: datetime
+    autor: AnalistaSimple
+    class Config:
+        from_attributes = True
+
+class IncidenciaSimple(BaseModel):
+    id: int
+    titulo: str
+    estado: EstadoIncidencia
+    tipo: TipoIncidencia
+    fecha_apertura: datetime
+    campana: "CampanaSimple"
+    class Config:
+        from_attributes = True
+
+class Incidencia(BaseModel):
+    id: int
+    titulo: str
+    descripcion_inicial: str
+    herramienta_afectada: Optional[str] = None
+    indicador_afectado: Optional[str] = None
+    tipo: TipoIncidencia
+    estado: EstadoIncidencia
+    fecha_apertura: datetime
+    fecha_cierre: Optional[datetime] = None
+    creador: AnalistaSimple
+    campana: "CampanaSimple"
+    actualizaciones: List[ActualizacionIncidencia] = []
+    class Config:
+        from_attributes = True
+
+# --- Actualización de relaciones en schemas existentes ---
+
+class Campana(CampanaBase):
+    id: int
+    fecha_creacion: datetime
+    analistas_asignados: List[AnalistaSimple] = []
+    comentarios_generales: List["ComentarioGeneralBitacora"] = []
+    incidencias: List[IncidenciaSimple] = []
     class Config:
         from_attributes = True
 
@@ -208,44 +268,6 @@ class ChecklistItem(ChecklistItemBase):
     class Config:
         from_attributes = True
 
-# ELIMINADO: ComentarioCampana y sus derivados ya no son necesarios.
-# class ComentarioCampanaSimple(BaseModel):
-#     id: int
-#     contenido: str
-#     fecha_creacion: datetime
-#     class Config:
-#         from_attributes = True
-#
-# class ComentarioCampana(ComentarioCampanaBase):
-#     id: int
-#     fecha_creacion: datetime
-#     campana: "CampanaSimple"
-#     analista: "AnalistaSimple"
-#     class Config:
-#         from_attributes = True
-
-class AvisoSimple(BaseModel):
-    id: int
-    titulo: str
-    fecha_vencimiento: Optional[datetime] = None
-    class Config:
-        from_attributes = True
-
-class AcuseReciboAvisoSimple(BaseModel):
-    id: int
-    fecha_acuse: datetime
-    analista: AnalistaSimple
-    class Config:
-        from_attributes = True
-
-class TareaGeneradaPorAvisoSimple(BaseModel):
-    id: int
-    titulo: str
-    progreso: ProgresoTarea
-    fecha_vencimiento: Optional[datetime] = None
-    class Config:
-        from_attributes = True
-
 class Aviso(AvisoBase):
     id: int
     fecha_creacion: datetime
@@ -263,23 +285,6 @@ class AcuseReciboAviso(AcuseReciboCreate):
     aviso: "AvisoSimple"
     class Config:
         from_attributes = True
-
-class BitacoraEntry(BitacoraEntryBase):
-    id: int
-    fecha_creacion: datetime
-    fecha_ultima_actualizacion: datetime
-    campana: "CampanaSimple"
-    class Config:
-        from_attributes = True
-
-# ELIMINADO: El schema BitacoraGeneralComment ya no se usa.
-# class BitacoraGeneralComment(BitacoraGeneralCommentBase):
-#     id: int
-#     fecha_creacion: datetime
-#     fecha_ultima_actualizacion: datetime
-#     campana: "CampanaSimple"
-#     class Config:
-#         from_attributes = True
 
 class HistorialEstadoTarea(HistorialEstadoTareaBase):
     id: int
@@ -306,6 +311,7 @@ class Analista(AnalistaBase):
     avisos_creados: List[AvisoSimple] = []
     acuses_recibo_avisos: List[AcuseReciboAvisoSimple] = []
     tareas_generadas_por_avisos: List[TareaGeneradaPorAvisoSimple] = []
+    incidencias_creadas: List[IncidenciaSimple] = []
     class Config:
         from_attributes = True
 
@@ -326,9 +332,5 @@ class AvisoListOutput(BaseModel):
         from_attributes = True
 
 # --- Forward References Update ---
-# Esto es para que Pydantic pueda resolver las referencias circulares
 Campana.model_rebuild()
-Aviso.model_rebuild()
-AcuseReciboAviso.model_rebuild()
-# ELIMINADO: BitacoraGeneralComment.model_rebuild()
-# ELIMINADO: ComentarioCampana.model_rebuild()
+Analista.model_rebuild()

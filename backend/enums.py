@@ -16,3 +16,8 @@ class TipoIncidencia(str, Enum):
     TECNICA = "TECNICA"
     OPERATIVA = "OPERATIVA"
     OTRO = "OTRO"
+
+class EstadoIncidencia(str, Enum):
+    ABIERTA = "ABIERTA"
+    EN_PROGRESO = "EN_PROGRESO"
+    CERRADA = "CERRADA"

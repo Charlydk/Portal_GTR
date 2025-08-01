@@ -10,15 +10,14 @@ from typing import Optional, List
 
 # Importamos los modelos de SQLAlchemy (para la DB)
 from sql_app import models
-from sql_app.models import UserRole, ProgresoTarea, TipoIncidencia # Importar ProgresoTarea y TipoIncidencia
+from sql_app.models import UserRole, ProgresoTarea, TipoIncidencia, EstadoIncidencia 
 from enums import UserRole, ProgresoTarea, TipoIncidencia
 
 
 # Importa los modelos Pydantic (tus esquemas para la API)
 from schemas.models import (
-     Token, TokenData,
-    ProgresoTarea, UserRole, TipoIncidencia,
-    AnalistaBase, Analista, AnalistaCreate, PasswordUpdate, AnalistaMe,
+    Token, TokenData,
+    AnalistaBase, Analista, AnalistaCreate, PasswordUpdate,
     CampanaBase, Campana, CampanaSimple,
     TareaBase, Tarea, TareaSimple, TareaListOutput, TareaUpdate,
     ChecklistItemBase, ChecklistItem, ChecklistItemSimple, ChecklistItemUpdate,
@@ -27,7 +26,9 @@ from schemas.models import (
     BitacoraEntryBase, BitacoraEntryUpdate, BitacoraEntry,
     ComentarioGeneralBitacoraCreate, ComentarioGeneralBitacora,
     TareaGeneradaPorAvisoBase, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAviso, TareaGeneradaPorAvisoSimple,
-    HistorialEstadoTareaBase, HistorialEstadoTarea, HistorialEstadoTareaSimple
+    HistorialEstadoTareaBase, HistorialEstadoTarea, HistorialEstadoTareaSimple,
+    Incidencia, IncidenciaCreate, IncidenciaSimple, IncidenciaUpdate,
+    ActualizacionIncidencia, ActualizacionIncidenciaBase
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -75,7 +76,6 @@ async def get_analista_by_email(email: str, db: AsyncSession) -> Optional[models
     return result.scalars().first()
 
 async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> models.Analista:
-    """Dependencia para obtener el analista autenticado a partir del token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No se pudieron validar las credenciales",
@@ -96,16 +96,20 @@ async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSes
     except Exception:
         raise credentials_exception
     
-    # Cargar el analista con todas las relaciones necesarias para el dashboard y otras operaciones
     result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.email == token_data.email)
         .options(
+            # CORRECCIÓN: Cargamos explícitamente TODAS las relaciones y sus anidaciones
+            # para prevenir cualquier error de carga perezosa (lazy loading).
             selectinload(models.Analista.campanas_asignadas),
-            selectinload(models.Analista.tareas), # Tareas de campaña
-            selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos),
-            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO: Cargar tareas generadas por avisos
+            selectinload(models.Analista.tareas).selectinload(models.Tarea.campana),
+            selectinload(models.Analista.avisos_creados).selectinload(models.Aviso.campana),
+            selectinload(models.Analista.acuses_recibo_avisos).selectinload(models.AcuseReciboAviso.aviso),
+            selectinload(models.Analista.tareas_generadas_por_avisos).selectinload(models.TareaGeneradaPorAviso.aviso_origen),
+            selectinload(models.Analista.incidencias_creadas).selectinload(models.Incidencia.campana),
+            selectinload(models.Analista.comentarios_generales_bitacora),
+            selectinload(models.Analista.actualizaciones_incidencia_hechas)
         )
     )
     analista = result.scalars().first()
@@ -115,9 +119,7 @@ async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSes
     return analista
 
 def require_role(required_roles: List[UserRole]):
-    """Dependencia para requerir roles específicos."""
     def role_checker(current_analista: models.Analista = Depends(get_current_analista)):
-        # CORRECCIÓN: Comparar los valores de cadena de los Enums
         if current_analista.role.value not in [r.value for r in required_roles]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -303,49 +305,42 @@ async def crear_analista(
             detail=f"Error inesperado al crear analista: {e}"
         )
 
-@app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas Activos (Protegido por Supervisor/Responsable)")
+@app.get("/analistas/", response_model=List[Analista], summary="Obtener todos los Analistas Activos")
 async def obtener_analistas(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(require_role([UserRole.SUPERVISOR, UserRole.RESPONSABLE]))
 ):
-    """
-    Obtiene la lista de todos los analistas **activos** desde la base de datos.
-    Requiere autenticación y rol de SUPERVISOR o RESPONSABLE.
-    """
-    query = select(models.Analista)
-    query = query.options(
+    query = select(models.Analista).where(models.Analista.esta_activo == True).options(
+        # CORRECCIÓN: Añadimos la carga ansiosa completa
         selectinload(models.Analista.campanas_asignadas),
         selectinload(models.Analista.tareas),
         selectinload(models.Analista.avisos_creados),
         selectinload(models.Analista.acuses_recibo_avisos),
-        selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
+        selectinload(models.Analista.tareas_generadas_por_avisos),
+        selectinload(models.Analista.incidencias_creadas)
     )
-    query = query.where(models.Analista.esta_activo == True)
     result = await db.execute(query)
     analistas = result.scalars().unique().all()
     return analistas
 
 
-@app.get("/analistas/{analista_id}", response_model=Analista, summary="Obtener Analista por ID (activo) (Protegido)")
+@app.get("/analistas/{analista_id}", response_model=Analista, summary="Obtener Analista por ID")
 async def obtener_analista_por_id(
     analista_id: int,
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Obtiene los detalles de un analista **activo** específico por su ID.
-    Requiere autenticación.
-    Un analista normal solo puede ver su propio perfil.
-    """
     result = await db.execute(
         select(models.Analista)
         .filter(models.Analista.id == analista_id, models.Analista.esta_activo == True)
         .options(
+            # CORRECCIÓN: Añadimos la carga ansiosa completa aquí también
             selectinload(models.Analista.campanas_asignadas),
-            selectinload(models.Analista.tareas),
-            selectinload(models.Analista.avisos_creados),
-            selectinload(models.Analista.acuses_recibo_avisos),
-            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
+            selectinload(models.Analista.tareas).selectinload(models.Tarea.campana),
+            selectinload(models.Analista.avisos_creados).selectinload(models.Aviso.campana),
+            selectinload(models.Analista.acuses_recibo_avisos).selectinload(models.AcuseReciboAviso.aviso),
+            selectinload(models.Analista.tareas_generadas_por_avisos).selectinload(models.TareaGeneradaPorAviso.aviso_origen),
+            selectinload(models.Analista.incidencias_creadas).selectinload(models.Incidencia.campana)
         )
     )
     analista = result.scalars().first()
@@ -728,11 +723,13 @@ async def obtener_campanas(
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
             # CORRECCIÓN: Usar el nuevo nombre de la relación y cargar el autor del comentario
-            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor),
+            selectinload(models.Campana.incidencias)
         )
     )
-    campanas = result.scalars().unique().all()
-    return campanas
+    campanas = result.scalars().all()
+    unique_campanas = {c.id: c for c in campanas}.values()
+    return list(unique_campanas)
 
 
 @app.get("/campanas/{campana_id}", response_model=Campana, summary="Obtener Campana por ID (Protegido)")
@@ -750,7 +747,8 @@ async def obtener_campana_por_id(
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
             # CORRECCIÓN: Usar el nuevo nombre de la relación
-            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor),
+            selectinload(models.Campana.incidencias).selectinload(models.Incidencia.creador)
         )
     )
     campana = result.scalars().first()
@@ -1805,17 +1803,13 @@ async def create_bitacora_entry(
         if not analista_with_campanas or campana_existente not in analista_with_campanas.campanas_asignadas:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear entradas de bitácora en esta campana.")
     
-    db_entry = models.BitacoraEntry(**entry.model_dump())
+    db_entry = models.BitacoraEntry(
+        campana_id=entry.campana_id,
+        fecha=entry.fecha,
+        hora=entry.hora,
+        comentario=entry.comentario,
+    )
     db.add(db_entry)
-    try:
-        await db.commit()
-        await db.refresh(db_entry)
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error inesperado al crear entrada de bitácora: {e}"
-        )
     
     result = await db.execute(
         select(models.BitacoraEntry)
@@ -1991,53 +1985,144 @@ async def create_comentario_general_para_campana(
 
 
 # --- ENDPOINT PARA OBTENER SOLO INCIDENCIAS (FILTRANDO LA BITÁCORA) ---
-@app.get("/incidencias/", response_model=List[BitacoraEntry], summary="Obtener Incidencias (filtradas de la Bitácora) (Protegido)")
-async def get_incidencias_filtered(
+
+@app.post("/incidencias/", response_model=Incidencia, status_code=status.HTTP_201_CREATED, summary="Crear una nueva Incidencia")
+async def create_incidencia(
+    incidencia_data: IncidenciaCreate,
     db: AsyncSession = Depends(get_db),
-    analista_id: Optional[int] = None,
-    tipo_incidencia: Optional[TipoIncidencia] = None, # Usar el Enum TipoIncidencia
-    fecha: Optional[date] = None, # Opcional para filtrar por fecha específica
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Obtiene una lista de entradas de bitácora que están marcadas como incidencias.
-    Requiere autenticación.
-    Un analista normal solo puede ver las incidencias de las campañas a las que está asignado.
-    Un Supervisor o Responsable pueden ver todas las incidencias y filtrarlas.
-    """
-    query = select(models.BitacoraEntry).options(
-        selectinload(models.BitacoraEntry.campana) # Cargar la campaña para mostrar su nombre
-    ).filter(models.BitacoraEntry.es_incidencia == True) # Solo entradas marcadas como incidencia
+    # Verificar que la campaña existe
+    campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == incidencia_data.campana_id))
+    if not campana_result.scalars().first():
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
-    if current_analista.role == UserRole.ANALISTA.value:
-        # Filtrar por campañas asignadas al analista actual
-        assigned_campaign_ids_result = await db.execute(
-            select(models.analistas_campanas.c.campana_id)
-            .where(models.analistas_campanas.c.analista_id == current_analista.id)
-        )
-        assigned_campaign_ids = [c_id for (c_id,) in assigned_campaigns_result.all()]
-        query = query.filter(models.BitacoraEntry.campana_id.in_(assigned_campaign_ids))
-    else: # Supervisor o Responsable
-        if analista_id:
-            # Si se filtra por analista, necesitamos unir con la tabla de campañas y analistas
-            # para verificar si el analista está asignado a la campaña de la incidencia.
-            # Sin embargo, dado que `BitacoraEntry` no tiene una relación directa con `Analista`,
-            # y la incidencia es solo un tipo de entrada, el filtro por `analista_id`
-            # en este contexto es más complejo si queremos saber "quién la registró".
-            # Por simplicidad, lo dejamos sin filtro por analista_id aquí.
-            pass
-        
-    if tipo_incidencia:
-        query = query.filter(models.BitacoraEntry.tipo_incidencia == tipo_incidencia)
+    db_incidencia = models.Incidencia(
+        **incidencia_data.model_dump(),
+        creador_id=current_analista.id
+    )
+    db.add(db_incidencia)
+    await db.commit()
+    await db.refresh(db_incidencia)
     
-    if fecha:
-        query = query.filter(models.BitacoraEntry.fecha == fecha)
+    # Cargar relaciones para la respuesta
+    result = await db.execute(
+        select(models.Incidencia)
+        .options(
+            selectinload(models.Incidencia.creador),
+            selectinload(models.Incidencia.campana),
+            selectinload(models.Incidencia.actualizaciones)
+        )
+        .filter(models.Incidencia.id == db_incidencia.id)
+    )
+    return result.scalars().first()
 
-    query = query.order_by(models.BitacoraEntry.fecha.desc(), models.BitacoraEntry.hora.desc())
+@app.get("/incidencias/", response_model=List[IncidenciaSimple], summary="Obtener lista de Incidencias")
+async def get_incidencias(
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    query = select(models.Incidencia).options(
+        selectinload(models.Incidencia.campana)
+    ).order_by(models.Incidencia.fecha_apertura.desc())
 
-    incidencias = await db.execute(query)
-    return incidencias.scalars().unique().all() # Usamos unique() para evitar duplicados si hay joins
+    # Un analista solo ve las de sus campañas, los demás ven todo
+    if current_analista.role == UserRole.ANALISTA.value:
+        assigned_campaign_ids = [c.id for c in current_analista.campanas_asignadas]
+        query = query.filter(models.Incidencia.campana_id.in_(assigned_campaign_ids))
 
+    result = await db.execute(query)
+    return result.scalars().unique().all()
+
+@app.get("/incidencias/{incidencia_id}", response_model=Incidencia, summary="Obtener detalles de una Incidencia")
+async def get_incidencia_by_id(
+    incidencia_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    result = await db.execute(
+        select(models.Incidencia)
+        .options(
+            selectinload(models.Incidencia.creador),
+            selectinload(models.Incidencia.campana),
+            selectinload(models.Incidencia.actualizaciones).selectinload(models.ActualizacionIncidencia.autor)
+        )
+        .filter(models.Incidencia.id == incidencia_id)
+    )
+    incidencia = result.scalars().first()
+    if not incidencia:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    
+    # Lógica de permisos
+    if current_analista.role == UserRole.ANALISTA.value:
+        assigned_campaign_ids = [c.id for c in current_analista.campanas_asignadas]
+        if incidencia.campana_id not in assigned_campaign_ids:
+            raise HTTPException(status_code=403, detail="No tienes permiso para ver esta incidencia")
+
+    return incidencia
+
+@app.post("/incidencias/{incidencia_id}/actualizaciones", response_model=ActualizacionIncidencia, summary="Añadir una actualización a una Incidencia")
+async def add_actualizacion_incidencia(
+    incidencia_id: int,
+    actualizacion_data: ActualizacionIncidenciaBase,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    # (Aquí iría la lógica para verificar permisos si fuera necesario)
+    db_actualizacion = models.ActualizacionIncidencia(
+        comentario=actualizacion_data.comentario,
+        incidencia_id=incidencia_id,
+        autor_id=current_analista.id
+    )
+    db.add(db_actualizacion)
+    await db.commit()
+    await db.refresh(db_actualizacion)
+
+    result = await db.execute(
+        select(models.ActualizacionIncidencia)
+        .options(selectinload(models.ActualizacionIncidencia.autor))
+        .filter(models.ActualizacionIncidencia.id == db_actualizacion.id)
+    )
+    return result.scalars().first()
+
+@app.put("/incidencias/{incidencia_id}/estado", response_model=Incidencia, summary="Cambiar el estado de una Incidencia")
+async def update_incidencia_estado(
+    incidencia_id: int,
+    update_data: IncidenciaUpdate,
+    db: AsyncSession = Depends(get_db),
+    # Se mantiene la dependencia para asegurar que el usuario está logueado
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    result = await db.execute(select(models.Incidencia).filter(models.Incidencia.id == incidencia_id))
+    db_incidencia = result.scalars().first()
+    if not db_incidencia:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+
+    # --- LÓGICA DE PERMISOS SIMPLIFICADA ---
+    # Según la nueva regla, cualquier usuario autenticado (analista o supervisor)
+    # puede cambiar el estado de la incidencia. Por lo tanto, eliminamos las comprobaciones de rol.
+    
+    db_incidencia.estado = update_data.estado
+    if update_data.estado == EstadoIncidencia.CERRADA:
+        db_incidencia.fecha_cierre = datetime.utcnow()
+    else:
+        db_incidencia.fecha_cierre = None
+
+    await db.commit()
+    
+    # Volver a cargar la incidencia con todas sus relaciones antes de devolverla
+    result = await db.execute(
+        select(models.Incidencia)
+        .options(
+            selectinload(models.Incidencia.creador),
+            selectinload(models.Incidencia.campana),
+            selectinload(models.Incidencia.actualizaciones).selectinload(models.ActualizacionIncidencia.autor)
+        )
+        .filter(models.Incidencia.id == incidencia_id)
+    )
+    incidencia_actualizada = result.scalars().first()
+    
+    return incidencia_actualizada
 
 # --- NUEVOS ENDPOINTS PARA TAREAS GENERADAS POR AVISOS ---
 
