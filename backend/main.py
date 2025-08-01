@@ -2090,7 +2090,6 @@ async def update_incidencia_estado(
     incidencia_id: int,
     update_data: IncidenciaUpdate,
     db: AsyncSession = Depends(get_db),
-    # Se mantiene la dependencia para asegurar que el usuario está logueado
     current_analista: models.Analista = Depends(get_current_analista)
 ):
     result = await db.execute(select(models.Incidencia).filter(models.Incidencia.id == incidencia_id))
@@ -2098,15 +2097,26 @@ async def update_incidencia_estado(
     if not db_incidencia:
         raise HTTPException(status_code=404, detail="Incidencia no encontrada")
 
-    # --- LÓGICA DE PERMISOS SIMPLIFICADA ---
-    # Según la nueva regla, cualquier usuario autenticado (analista o supervisor)
-    # puede cambiar el estado de la incidencia. Por lo tanto, eliminamos las comprobaciones de rol.
-    
+    # Guardamos el estado anterior para el comentario del historial
+    estado_anterior = db_incidencia.estado.value
+
+    # Actualizamos el estado de la incidencia
     db_incidencia.estado = update_data.estado
     if update_data.estado == EstadoIncidencia.CERRADA:
         db_incidencia.fecha_cierre = datetime.utcnow()
     else:
         db_incidencia.fecha_cierre = None
+
+    # --- CAMBIO CLAVE: Crear una entrada de actualización automática ---
+    comentario_automatico = f"El estado de la incidencia cambió de '{estado_anterior}' a '{update_data.estado.value}'."
+    
+    nueva_actualizacion = models.ActualizacionIncidencia(
+        comentario=comentario_automatico,
+        incidencia_id=incidencia_id,
+        autor_id=current_analista.id
+    )
+    db.add(nueva_actualizacion)
+    # -----------------------------------------------------------------
 
     await db.commit()
     
