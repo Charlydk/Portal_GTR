@@ -3,7 +3,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { Container, Card, Spinner, Alert, ListGroup, Badge, Form, Button, Row, Col } from 'react-bootstrap';
+// CORRECCIÓN: Añadimos 'Modal' a la lista de importaciones
+import { Container, Card, Spinner, Alert, ListGroup, Badge, Form, Button, Row, Col, Modal } from 'react-bootstrap';
 
 function DetalleIncidenciaPage() {
     const { id } = useParams();
@@ -13,6 +14,10 @@ function DetalleIncidenciaPage() {
     const [error, setError] = useState(null);
     const [nuevoComentario, setNuevoComentario] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const [showCierreModal, setShowCierreModal] = useState(false);
+    const [usarAhoraCierre, setUsarAhoraCierre] = useState(true);
+    const [fechaCierreManual, setFechaCierreManual] = useState('');
 
     const formatDateTime = (isoString) => {
         if (!isoString) return 'N/A';
@@ -66,7 +71,7 @@ function DetalleIncidenciaPage() {
                 throw new Error(errData.detail || 'No se pudo añadir la actualización.');
             }
             setNuevoComentario('');
-            fetchIncidencia(); // Recargar datos
+            fetchIncidencia();
         } catch (err) {
             setError(err.message);
         } finally {
@@ -74,9 +79,18 @@ function DetalleIncidenciaPage() {
         }
     };
 
-    const handleStatusChange = async (nuevoEstado) => {
+    const handleStatusChange = async (nuevoEstado, fechaCierre = null) => {
         setIsSubmitting(true);
         setError(null);
+        
+        const payload = {
+            estado: nuevoEstado,
+        };
+
+        if (nuevoEstado === 'CERRADA' && fechaCierre) {
+            payload.fecha_cierre = fechaCierre;
+        }
+
         try {
             const response = await fetch(`${API_BASE_URL}/incidencias/${id}/estado`, {
                 method: 'PUT',
@@ -84,26 +98,34 @@ function DetalleIncidenciaPage() {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${authToken}`,
                 },
-                body: JSON.stringify({ estado: nuevoEstado }),
+                body: JSON.stringify(payload),
             });
             if (!response.ok) {
                 const errData = await response.json();
                 throw new Error(errData.detail || 'No se pudo cambiar el estado.');
             }
-            fetchIncidencia(); // Recargar datos
+            fetchIncidencia();
         } catch (err) {
             setError(err.message);
         } finally {
             setIsSubmitting(false);
+            setShowCierreModal(false);
         }
+    };
+
+    const handleConfirmarCierre = () => {
+        const fechaParaEnviar = usarAhoraCierre ? null : fechaCierreManual;
+        if (!usarAhoraCierre && !fechaCierreManual) {
+            alert("Por favor, seleccione una fecha y hora de cierre.");
+            return;
+        }
+        handleStatusChange('CERRADA', fechaParaEnviar);
     };
 
     if (loading) return <Container className="text-center py-5"><Spinner animation="border" /></Container>;
     if (error) return <Container className="mt-4"><Alert variant="danger">{error}</Alert></Container>;
     if (!incidencia) return <Container className="mt-4"><Alert variant="info">Incidencia no encontrada.</Alert></Container>;
 
-    // --- LÓGICA DE PERMISOS SIMPLIFICADA ---
-    // La sección de gestión es visible para CUALQUIER usuario logueado.
     const canManageStatus = !!user;
 
     return (
@@ -163,21 +185,17 @@ function DetalleIncidenciaPage() {
                 </Card.Body>
             </Card>
 
-            {/* CAMBIO: La sección de gestión ahora es visible para todos los usuarios logueados */}
             {canManageStatus && (
                 <Card className="shadow-lg mt-4">
                     <Card.Header as="h4">Gestionar Incidencia</Card.Header>
                     <Card.Body className="text-center">
                         <p>Cambiar estado de la incidencia:</p>
-                        
                         <Button variant="warning" onClick={() => handleStatusChange('EN_PROGRESO')} disabled={isSubmitting || incidencia.estado === 'EN_PROGRESO'} className="me-2">
                             Marcar como "En Progreso"
                         </Button>
-
-                        <Button variant="success" onClick={() => handleStatusChange('CERRADA')} disabled={isSubmitting || incidencia.estado === 'CERRADA'} className="me-2">
+                        <Button variant="success" onClick={() => setShowCierreModal(true)} disabled={isSubmitting || incidencia.estado === 'CERRADA'} className="me-2">
                             Cerrar Incidencia
                         </Button>
-                        
                         {incidencia.estado !== 'ABIERTA' && (
                              <Button variant="danger" onClick={() => handleStatusChange('ABIERTA')} disabled={isSubmitting}>
                                 Reabrir Incidencia
@@ -186,6 +204,39 @@ function DetalleIncidenciaPage() {
                     </Card.Body>
                 </Card>
             )}
+
+            <Modal show={showCierreModal} onHide={() => setShowCierreModal(false)}>
+                <Modal.Header closeButton>
+                    <Modal.Title>Confirmar Cierre de Incidencia</Modal.Title>
+                </Modal.Header>
+                <Modal.Body>
+                    <Form.Group controlId="fecha_cierre_group">
+                        <Form.Check 
+                            type="checkbox"
+                            id="usarAhoraCierre"
+                            label="Usar fecha y hora actual para el cierre"
+                            checked={usarAhoraCierre}
+                            onChange={(e) => setUsarAhoraCierre(e.target.checked)}
+                        />
+                        {!usarAhoraCierre && (
+                            <Form.Control
+                                type="datetime-local"
+                                value={fechaCierreManual}
+                                onChange={(e) => setFechaCierreManual(e.target.value)}
+                                className="mt-2"
+                            />
+                        )}
+                    </Form.Group>
+                </Modal.Body>
+                <Modal.Footer>
+                    <Button variant="secondary" onClick={() => setShowCierreModal(false)}>
+                        Cancelar
+                    </Button>
+                    <Button variant="primary" onClick={handleConfirmarCierre} disabled={isSubmitting}>
+                        {isSubmitting ? <Spinner size="sm" /> : "Confirmar Cierre"}
+                    </Button>
+                </Modal.Footer>
+            </Modal>
         </Container>
     );
 }

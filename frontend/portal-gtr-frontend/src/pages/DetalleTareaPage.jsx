@@ -449,11 +449,9 @@ const handleDejarTarea = async () => {
                     label={item.descripcion}
                     checked={item.completado}
                     onChange={() => handleToggleChecklistItem(item.id, item.completado)}
-                    // CAMBIO: Usamos la nueva variable de permisos 'canManageChecklist'
                     disabled={submittingChecklist === item.id || !canManageChecklist}
                   />
-                  {submittingChecklist === item.id && <Spinner animation="border" size="sm" className="ms-2" />}
-                  {/* CAMBIO: Usamos la nueva variable de permisos 'canManageChecklist' */}
+                  {submittingChecklist === item.id && <Spinner animation="border" size="sm" />}
                   {canManageChecklist && (
                     <Button
                       variant="outline-secondary"

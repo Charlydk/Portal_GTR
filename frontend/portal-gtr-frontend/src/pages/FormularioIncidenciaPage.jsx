@@ -20,7 +20,9 @@ function FormularioIncidenciaPage() {
         indicador_afectado: '',
         tipo: 'TECNICA',
         campana_id: campanaIdFromQuery || '',
+        fecha_apertura: '',
     });
+    const [usarAhoraCreacion, setUsarAhoraCreacion] = useState(true);
     const [campanas, setCampanas] = useState([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState(null);
@@ -48,12 +50,25 @@ function FormularioIncidenciaPage() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.campana_id) {
-            setError("Debe seleccionar una campaña.");
-            return;
-        }
         setIsSubmitting(true);
         setError(null);
+
+        // Preparamos el payload que se enviará
+        const payload = {
+            ...formData,
+            campana_id: parseInt(formData.campana_id, 10),
+        };
+
+        // Si el checkbox está marcado, no enviamos fecha_apertura
+        // para que el backend use la hora actual.
+        if (usarAhoraCreacion) {
+            delete payload.fecha_apertura;
+        } else if (!payload.fecha_apertura) {
+            // Si no está marcado, nos aseguramos de que se haya introducido una fecha
+            setError("Debe especificar una fecha y hora de apertura.");
+            setIsSubmitting(false);
+            return;
+        }
 
         try {
             const response = await fetch(`${API_BASE_URL}/incidencias/`, {
@@ -62,10 +77,7 @@ function FormularioIncidenciaPage() {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${authToken}`,
                 },
-                body: JSON.stringify({
-                    ...formData,
-                    campana_id: parseInt(formData.campana_id, 10)
-                }),
+                body: JSON.stringify(payload),
             });
 
             if (!response.ok) {
@@ -98,6 +110,25 @@ function FormularioIncidenciaPage() {
                         <Form.Group className="mb-3" controlId="descripcion_inicial">
                             <Form.Label>Descripción Inicial</Form.Label>
                             <Form.Control as="textarea" rows={4} name="descripcion_inicial" value={formData.descripcion_inicial} onChange={handleChange} required />
+                        </Form.Group>
+
+                        <Form.Group className="mb-3" controlId="fecha_apertura_group">
+                            <Form.Check 
+                                type="checkbox"
+                                id="usarAhoraCreacion"
+                                label="Usar fecha y hora actual para la apertura"
+                                checked={usarAhoraCreacion}
+                                onChange={(e) => setUsarAhoraCreacion(e.target.checked)}
+                            />
+                            {!usarAhoraCreacion && (
+                                <Form.Control
+                                    type="datetime-local"
+                                    name="fecha_apertura"
+                                    value={formData.fecha_apertura}
+                                    onChange={handleChange}
+                                    className="mt-2"
+                                />
+                            )}
                         </Form.Group>
 
                         <Row>
