@@ -27,7 +27,7 @@ from schemas.models import (
     ComentarioGeneralBitacoraCreate, ComentarioGeneralBitacora,
     TareaGeneradaPorAvisoBase, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAviso, TareaGeneradaPorAvisoSimple,
     HistorialEstadoTareaBase, HistorialEstadoTarea, HistorialEstadoTareaSimple,
-    Incidencia, IncidenciaCreate, IncidenciaSimple, IncidenciaUpdate,
+    Incidencia, IncidenciaCreate, IncidenciaSimple, IncidenciaEstadoUpdate,
     ActualizacionIncidencia, ActualizacionIncidenciaBase
 )
 
@@ -2013,11 +2013,11 @@ async def create_incidencia(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    # Verificar que la campaña existe
     campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == incidencia_data.campana_id))
     if not campana_result.scalars().first():
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
 
+    # CAMBIO: Si no se provee fecha_apertura, la base de datos usará el default=func.now()
     db_incidencia = models.Incidencia(
         **incidencia_data.model_dump(),
         creador_id=current_analista.id
@@ -2026,7 +2026,7 @@ async def create_incidencia(
     await db.commit()
     await db.refresh(db_incidencia)
     
-    # Cargar relaciones para la respuesta
+    # ... (código de recarga sin cambios)
     result = await db.execute(
         select(models.Incidencia)
         .options(
@@ -2109,7 +2109,7 @@ async def add_actualizacion_incidencia(
 @app.put("/incidencias/{incidencia_id}/estado", response_model=Incidencia, summary="Cambiar el estado de una Incidencia")
 async def update_incidencia_estado(
     incidencia_id: int,
-    update_data: IncidenciaUpdate,
+    update_data: IncidenciaEstadoUpdate,
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
@@ -2118,30 +2118,24 @@ async def update_incidencia_estado(
     if not db_incidencia:
         raise HTTPException(status_code=404, detail="Incidencia no encontrada")
 
-    # Guardamos el estado anterior para el comentario del historial
     estado_anterior = db_incidencia.estado.value
-
-    # Actualizamos el estado de la incidencia
     db_incidencia.estado = update_data.estado
+
     if update_data.estado == EstadoIncidencia.CERRADA:
-        db_incidencia.fecha_cierre = datetime.utcnow()
+        db_incidencia.fecha_cierre = update_data.fecha_cierre or datetime.utcnow()
     else:
         db_incidencia.fecha_cierre = None
 
-    # --- CAMBIO CLAVE: Crear una entrada de actualización automática ---
     comentario_automatico = f"El estado de la incidencia cambió de '{estado_anterior}' a '{update_data.estado.value}'."
-    
     nueva_actualizacion = models.ActualizacionIncidencia(
         comentario=comentario_automatico,
         incidencia_id=incidencia_id,
         autor_id=current_analista.id
     )
     db.add(nueva_actualizacion)
-    # -----------------------------------------------------------------
 
     await db.commit()
     
-    # Volver a cargar la incidencia con todas sus relaciones antes de devolverla
     result = await db.execute(
         select(models.Incidencia)
         .options(
@@ -2154,6 +2148,7 @@ async def update_incidencia_estado(
     incidencia_actualizada = result.scalars().first()
     
     return incidencia_actualizada
+
 
 # --- NUEVOS ENDPOINTS PARA TAREAS GENERADAS POR AVISOS ---
 

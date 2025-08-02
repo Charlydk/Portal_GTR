@@ -112,9 +112,12 @@ class IncidenciaCreate(BaseModel):
     indicador_afectado: Optional[str] = None
     tipo: TipoIncidencia
     campana_id: int
+    fecha_apertura: Optional[datetime] = None
 
-class IncidenciaUpdate(BaseModel):
+# CORRECCIÓN: Renombramos el schema para que sea más claro
+class IncidenciaEstadoUpdate(BaseModel):
     estado: EstadoIncidencia
+    fecha_cierre: Optional[datetime] = None
 
 # --- Schemas de Respuesta (para devolver datos desde la API) ---
 
