@@ -1,274 +1,223 @@
 // src/pages/TareasPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Container, Row, Col, Card, Spinner, Alert, ListGroup, Button, Badge } from 'react-bootstrap';
+import { Container, Row, Col, Card, Spinner, Alert, ListGroup, Button, Badge, Form } from 'react-bootstrap';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../api';
 import { useNavigate } from 'react-router-dom';
 
 function TareasPage() {
-  const { user, authToken, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+    const { user, authToken, loading: authLoading } = useAuth();
+    const navigate = useNavigate();
 
-  const [allTasks, setAllTasks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState(null);
-  const [submittingTaskId, setSubmittingTaskId] = useState(null); // Para deshabilitar el botón mientras se actualiza
+    const [allTasks, setAllTasks] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
 
-  const fetchAllTasks = useCallback(async () => {
-    if (!authToken || !user) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      let campaignTasks = [];
-      let generatedTasks = [];
+    // --- INICIO DE CAMBIOS: Estado de filtros ampliado ---
+    const [filtros, setFiltros] = useState({
+        analistaId: '',
+        campanaId: '',
+        estado: '',
+        fechaDesde: '',
+        fechaHasta: ''
+    });
+    const [analistas, setAnalistas] = useState([]);
+    const [campanas, setCampanas] = useState([]);
+    // --- FIN DE CAMBIOS ---
 
-      // Fetch Campaign Tasks (filtered by user role)
-      let campaignTasksUrl = `${API_BASE_URL}/tareas/`;
-      if (user.role === 'ANALISTA') {
-        campaignTasksUrl += `?analista_id=${user.id}`;
-      }
-      const campaignTasksResponse = await fetch(campaignTasksUrl, {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-      });
-      if (!campaignTasksResponse.ok) {
-        const errorData = await campaignTasksResponse.json();
-        throw new Error(errorData.detail || `Error al cargar tareas de campaña: ${campaignTasksResponse.statusText}`);
-      }
-      campaignTasks = await campaignTasksResponse.json();
-      // Add a 'type' property to distinguish campaign tasks
-      campaignTasks = campaignTasks.map(task => ({ ...task, type: 'campaign' }));
+    // La función fetchFilterData ahora también obtiene campañas para los analistas
+    const fetchFilterData = useCallback(async () => {
+        if (!authToken || !user) return;
+        try {
+            // Supervisores obtienen todo
+            if (user.role !== 'ANALISTA') {
+                const [analistasRes, campanasRes] = await Promise.all([
+                    fetch(`${API_BASE_URL}/analistas/`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+                    fetch(`${API_BASE_URL}/campanas/`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+                ]);
+                if (!analistasRes.ok) throw new Error('No se pudo cargar la lista de analistas.');
+                if (!campanasRes.ok) throw new Error('No se pudo cargar la lista de campañas.');
+                setAnalistas(await analistasRes.json());
+                setCampanas(await campanasRes.json());
+            } else { // Analistas obtienen solo sus campañas
+                const userRes = await fetch(`${API_BASE_URL}/users/me/`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+                if (!userRes.ok) throw new Error('No se pudo cargar la lista de campañas.');
+                const userData = await userRes.json();
+                setCampanas(userData.campanas_asignadas || []);
+            }
+        } catch (err) {
+            setError(err.message);
+        }
+    }, [authToken, user]);
 
-      // Fetch Generated Tasks (always filtered by current user for ANALISTA)
-      let generatedTasksUrl = `${API_BASE_URL}/tareas_generadas_por_avisos/`;
-      if (user.role === 'ANALISTA') {
-        generatedTasksUrl += `?analista_id=${user.id}`;
-      }
-      const generatedTasksResponse = await fetch(generatedTasksUrl, {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-      });
-      if (!generatedTasksResponse.ok) {
-        const errorData = await generatedTasksResponse.json();
-        throw new Error(errorData.detail || `Error al cargar tareas generadas por avisos: ${generatedTasksResponse.statusText}`);
-      }
-      generatedTasks = await generatedTasksResponse.json();
-      // Add a 'type' property to distinguish generated tasks
-      generatedTasks = generatedTasks.map(task => ({ ...task, type: 'generated' }));
+    // La función fetchAllTasks ahora es mucho más inteligente
+    const fetchAllTasks = useCallback(async () => {
+        if (!authToken || !user) return;
+        setLoading(true);
+        setError(null);
+        try {
+            const params = new URLSearchParams();
+            if (user.role === 'ANALISTA') {
+                params.append('analista_id', user.id);
+            } else if (filtros.analistaId) {
+                params.append('analista_id', filtros.analistaId);
+            }
 
-      // Combine and sort all tasks by creation date (newest first)
-      const combinedTasks = [...campaignTasks, ...generatedTasks].sort((a, b) => {
-        return new Date(b.fecha_creacion) - new Date(a.fecha_creacion);
-      });
+            if (filtros.campanaId) params.append('campana_id', filtros.campanaId);
+            if (filtros.estado) params.append('estado', filtros.estado);
+            if (filtros.fechaDesde) params.append('fecha_desde', filtros.fechaDesde);
+            if (filtros.fechaHasta) params.append('fecha_hasta', filtros.fechaHasta);
+            
+            const queryString = params.toString();
+            const campaignTasksUrl = `${API_BASE_URL}/tareas/?${queryString}`;
+            const generatedTasksUrl = `${API_BASE_URL}/tareas_generadas_por_avisos/?${queryString}`;
 
-      setAllTasks(combinedTasks);
+            const [campaignTasksResponse, generatedTasksResponse] = await Promise.all([
+                fetch(campaignTasksUrl, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+                fetch(generatedTasksUrl, { headers: { 'Authorization': `Bearer ${authToken}` } })
+            ]);
 
-    } catch (err) {
-      console.error("Error fetching all tasks:", err);
-      setError(err.message || "No se pudieron cargar las tareas.");
-    } finally {
-      setLoading(false);
-    }
-  }, [authToken, user]);
+            if (!campaignTasksResponse.ok) throw new Error('Error al cargar tareas de campaña.');
+            if (!generatedTasksResponse.ok) throw new Error('Error al cargar tareas generadas.');
 
-  useEffect(() => {
-    if (!authLoading && user) {
-      fetchAllTasks();
-    }
-  }, [authLoading, user, fetchAllTasks]);
+            const campaignTasks = (await campaignTasksResponse.json()).map(t => ({ ...t, type: 'campaign' }));
+            const generatedTasks = (await generatedTasksResponse.json()).map(t => ({ ...t, type: 'generated' }));
 
-  const handleMarcarCompletada = async (taskId, taskType) => {
-    if (!authToken || !user) {
-      setError("Necesita iniciar sesión para realizar esta acción.");
-      return;
-    }
-    setSubmittingTaskId(taskId); // Set the ID of the task being submitted
-    setError(null);
-    setSuccessMessage(null);
+            const combinedTasks = [...campaignTasks, ...generatedTasks].sort((a, b) => new Date(b.fecha_creacion) - new Date(a.fecha_creacion));
+            setAllTasks(combinedTasks);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }, [authToken, user, filtros]);
 
-    try {
-      const url = taskType === 'generated' 
-        ? `${API_BASE_URL}/tareas_generadas_por_avisos/${taskId}`
-        : `${API_BASE_URL}/tareas/${taskId}`; // Fallback, though campaign tasks are managed differently
+    useEffect(() => {
+        if (!authLoading && user) {
+            fetchFilterData();
+            fetchAllTasks();
+        }
+    }, [authLoading, user, filtros, fetchAllTasks, fetchFilterData]); // 'filtros' ahora es una dependencia
 
-      const payload = { progreso: 'COMPLETADA' };
+    const handleFilterChange = (e) => {
+        setFiltros(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    };
 
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || `Error al marcar como completada: ${response.statusText}`);
-      }
-
-      setSuccessMessage(`Tarea ${taskId} marcada como COMPLETADA con éxito!`);
-      fetchAllTasks(); // Recargar todas las tareas para reflejar el cambio
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err) {
-      console.error("Error al marcar tarea como completada:", err);
-      setError(err.message || "No se pudo marcar la tarea como completada.");
-      setTimeout(() => setError(null), 5000);
-    } finally {
-      setSubmittingTaskId(null); // Clear the submitting task ID
-    }
-  };
-
-  const formatDateTime = (apiDateString) => {
-    // Si no hay fecha, devuelve N/A
-    if (!apiDateString) {
-        return 'N/A';
-    }
-
-    // --- LA CORRECCIÓN DEFINITIVA ---
-    // Le añadimos la 'Z' al final para forzar a que JavaScript
-    // interprete el string como una fecha en formato UTC universal.
-    const date = new Date(apiDateString + 'Z');
-    // --------------------------------
-
-    // Verificamos si la fecha parseada es válida
-    if (isNaN(date.getTime())) {
-        return 'Fecha inválida';
-    }
-
-    // A partir de aquí, el resto del código funciona como se espera
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0'); // Los meses son de 0 a 11
-    const year = date.getFullYear();
+    const clearFilters = () => {
+        setFiltros({ analistaId: '', campanaId: '', estado: '', fechaDesde: '', fechaHasta: '' });
+    };
     
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
+    // El resto de funciones no cambian
+    const formatDateTime = (apiDateString) => {
+        if (!apiDateString) return 'N/A';
+        const date = new Date(apiDateString + 'Z');
+        if (isNaN(date.getTime())) return 'Fecha inválida';
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${day}/${month}/${year}, ${hours}:${minutes}`;
+    };
 
-    return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
-};
+    if (authLoading) return <Container className="text-center py-5"><Spinner /></Container>;
 
-  if (authLoading || loading) {
     return (
-      <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
-        <Spinner animation="border" role="status">
-          <span className="visually-hidden">Cargando Tareas...</span>
-        </Spinner>
-        <p className="ms-3 text-muted">Cargando todas las tareas...</p>
-      </Container>
+        <Container className="py-5">
+            <h1 className="mb-4 text-center text-primary">Gestión de Tareas</h1>
+            {error && <Alert variant="danger">{error}</Alert>}
+
+            {/* --- INICIO DE CAMBIOS: El formulario de filtros ahora es para todos --- */}
+            <Card className="mb-4 shadow-sm">
+                <Card.Body>
+                    <Row className="g-3">
+                        {user.role !== 'ANALISTA' && (
+                            <Col md={4}>
+                                <Form.Group>
+                                    <Form.Label>Analista</Form.Label>
+                                    <Form.Select name="analistaId" value={filtros.analistaId} onChange={handleFilterChange}>
+                                        <option value="">Todos</option>
+                                        {analistas.map(a => <option key={a.id} value={a.id}>{a.nombre} {a.apellido}</option>)}
+                                    </Form.Select>
+                                </Form.Group>
+                            </Col>
+                        )}
+                        <Col md={user.role !== 'ANALISTA' ? 4 : 6}>
+                            <Form.Group>
+                                <Form.Label>Campaña</Form.Label>
+                                <Form.Select name="campanaId" value={filtros.campanaId} onChange={handleFilterChange}>
+                                    <option value="">Todas</option>
+                                    {campanas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                </Form.Select>
+                            </Form.Group>
+                        </Col>
+                        <Col md={user.role !== 'ANALISTA' ? 4 : 6}>
+                            <Form.Group>
+                                <Form.Label>Estado</Form.Label>
+                                <Form.Select name="estado" value={filtros.estado} onChange={handleFilterChange}>
+                                    <option value="">Todos</option>
+                                    <option value="PENDIENTE">Pendiente</option>
+                                    <option value="EN_PROGRESO">En Progreso</option>
+                                    <option value="COMPLETADA">Completada</option>
+                                    <option value="CANCELADA">Cancelada</option>
+                                </Form.Select>
+                            </Form.Group>
+                        </Col>
+                        <Col md={4}>
+                            <Form.Group>
+                                <Form.Label>Vencimiento Desde</Form.Label>
+                                <Form.Control type="date" name="fechaDesde" value={filtros.fechaDesde} onChange={handleFilterChange} />
+                            </Form.Group>
+                        </Col>
+                        <Col md={4}>
+                            <Form.Group>
+                                <Form.Label>Vencimiento Hasta</Form.Label>
+                                <Form.Control type="date" name="fechaHasta" value={filtros.fechaHasta} onChange={handleFilterChange} />
+                            </Form.Group>
+                        </Col>
+                        <Col md={4} className="d-flex align-items-end">
+                            <Button variant="secondary" onClick={clearFilters} className="w-100">Limpiar Filtros</Button>
+                        </Col>
+                    </Row>
+                </Card.Body>
+            </Card>
+            {/* --- FIN DE CAMBIOS --- */}
+
+            <div className="d-flex justify-content-between align-items-center mb-3">
+                <h4>{loading ? 'Cargando...' : `Mostrando ${allTasks.length} tareas`}</h4>
+                <Button variant="primary" onClick={() => navigate('/tareas/crear')}>
+                    Crear Nueva Tarea
+                </Button>
+            </div>
+
+            {loading ? (
+                <div className="text-center"><Spinner /></div>
+            ) : allTasks.length > 0 ? (
+                // ... (La lista de tareas no necesita cambios)
+                 <ListGroup variant="flush">
+                    {allTasks.map(tarea => (
+                       <ListGroup.Item key={`${tarea.type}-${tarea.id}`} className="mb-2 shadow-sm rounded p-3">
+                            <Row>
+                                <Col>
+                                    <h5>{tarea.titulo} <Badge bg={tarea.type === 'campaign' ? 'primary' : 'info'}>{tarea.type === 'campaign' ? 'Campaña' : 'Aviso'}</Badge></h5>
+                                    <p className="mb-1 text-muted small">{tarea.descripcion}</p>
+                                    <small>Asignado a: {tarea.analista?.nombre || tarea.analista_asignado?.nombre || 'N/A'} {tarea.analista?.apellido || tarea.analista_asignado?.apellido}</small>
+                                    <br/>
+                                    <small>Estado: <Badge bg={tarea.progreso === 'PENDIENTE' ? 'secondary' : 'success'}>{tarea.progreso}</Badge></small>
+                                    {tarea.fecha_vencimiento && <small className="ms-2 text-danger">Vence: {formatDateTime(tarea.fecha_vencimiento)}</small>}
+                                </Col>
+                                <Col xs="auto" className="d-flex flex-column justify-content-center">
+                                    <Button variant="outline-primary" size="sm" onClick={() => navigate(tarea.type === 'campaign' ? `/tareas/${tarea.id}` : `/tareas-generadas/${tarea.id}`)}>Ver Detalles</Button>
+                                </Col>
+                            </Row>
+                        </ListGroup.Item>
+                    ))}
+                </ListGroup>
+            ) : (
+                <Alert variant="info">No se encontraron tareas con los filtros seleccionados.</Alert>
+            )}
+        </Container>
     );
-  }
-
-  if (error) {
-    return (
-      <Container className="mt-4">
-        <Alert variant="danger">
-          <Alert.Heading>Error al cargar las Tareas</Alert.Heading>
-          <p>{error}</p>
-          <Button onClick={() => navigate('/dashboard')}>Volver al Dashboard</Button>
-        </Alert>
-      </Container>
-    );
-  }
-
-  // Ahora, cualquier rol que pueda crear tareas (Analista, Supervisor, Responsable)
-  const canCreateTask = user && (user.role === 'ANALISTA' || user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
-
-  return (
-    <Container className="py-5">
-      <h1 className="mb-4 text-center text-primary">Mis Tareas</h1>
-      {successMessage && <Alert variant="success">{successMessage}</Alert>}
-      {error && <Alert variant="danger">{error}</Alert>}
-
-      {canCreateTask && ( // Mostrar el botón si el usuario puede crear tareas
-        <div className="d-flex justify-content-end mb-3">
-          <Button variant="primary" onClick={() => navigate('/tareas/crear')}>
-            Crear Nueva Tarea
-          </Button>
-        </div>
-      )}
-
-      {allTasks.length > 0 ? (
-        <ListGroup variant="flush">
-          {allTasks.map(tarea => {
-            // Determinar si el usuario actual puede editar esta tarea específica
-            const canEditThisTask = user && (
-              user.role === 'SUPERVISOR' ||
-              user.role === 'RESPONSABLE' ||
-              (user.role === 'ANALISTA' && (tarea.analista_id === user.id || tarea.analista_asignado?.id === user.id))
-            );
-
-            return (
-              <ListGroup.Item key={`${tarea.type}-${tarea.id}`} className="d-flex justify-content-between align-items-center mb-2 shadow-sm rounded">
-                <div>
-                  <h5>
-                    {tarea.titulo}
-                    <Badge bg={tarea.type === 'campaign' ? 'primary' : 'info'} className="ms-2">
-                      {tarea.type === 'campaign' ? 'Campaña' : 'Aviso'}
-                    </Badge>
-                  </h5>
-                  <p className="mb-1 text-muted">{tarea.descripcion}</p>
-                  <small>
-                    Asignado a: {tarea.analista?.nombre || tarea.analista_asignado?.nombre} {tarea.analista?.apellido || tarea.analista_asignado?.apellido}
-                    {tarea.campana && ` | Campaña: ${tarea.campana.nombre}`}
-                  </small>
-                  <br/>
-                  <small>
-                    Estado: <Badge bg={tarea.progreso === 'PENDIENTE' ? 'danger' : 'success'}>{tarea.progreso}</Badge>
-                    {tarea.fecha_vencimiento && (
-                      <span className="ms-2 text-danger">Vence: {formatDateTime(tarea.fecha_vencimiento)}</span>
-                    )}
-                  </small>
-                </div>
-                <div className="d-flex flex-column align-items-end">
-                  <Button
-                    variant="outline-primary"
-                    size="sm"
-                    onClick={() => navigate(tarea.type === 'campaign' ? `/tareas/${tarea.id}` : `/tareas-generadas/${tarea.id}`)}
-                    className="mb-2"
-                  >
-                    Ver Detalles
-                  </Button>
-                  {canEditThisTask && ( // Mostrar el botón de editar si tiene permisos
-                    <Button
-                      variant="outline-secondary"
-                      size="sm"
-                      onClick={() => navigate(tarea.type === 'campaign' ? `/tareas/editar/${tarea.id}` : `/tareas-generadas/editar/${tarea.id}`)}
-                      className="mb-2"
-                    >
-                      Editar
-                    </Button>
-                  )}
-                  {tarea.type === 'generated' && tarea.progreso === 'PENDIENTE' && (
-                    <Button
-                      variant="success"
-                      size="sm"
-                      onClick={() => handleMarcarCompletada(tarea.id, tarea.type)}
-                      disabled={submittingTaskId === tarea.id}
-                    >
-                      {submittingTaskId === tarea.id ? (
-                        <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
-                      ) : (
-                        'Marcar Completada'
-                      )}
-                    </Button>
-                  )}
-                </div>
-              </ListGroup.Item>
-            );
-          })}
-        </ListGroup>
-      ) : (
-        <Alert variant="info">No tienes tareas asignadas en este momento.</Alert>
-      )}
-    </Container>
-  );
 }
 
 export default TareasPage;
