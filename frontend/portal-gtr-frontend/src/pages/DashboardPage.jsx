@@ -192,7 +192,9 @@ function DashboardPage() {
                                 <StatWidget title="Incidencias Nuevas (Sin Asignar)" value={dashboardStats.incidencias_sin_asignar} variant="info" />
                             </Col>
                              <Col md={4}>
+                                <Link to="/tareas/disponibles" className="text-decoration-none">
                                 <StatWidget title="Tareas de Campaña Disponibles" value={tareasDisponibles.length} variant="primary" />
+                                </Link>
                             </Col>
                         </>
                     )}
