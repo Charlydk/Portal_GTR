@@ -83,6 +83,9 @@ function DetalleCampanaPage() {
         return <Container className="mt-4"><Alert variant="info">Campaña no encontrada.</Alert></Container>;
     }
 
+    const incidenciasActivasCount = campana?.incidencias?.filter(
+        inc => inc.estado === 'ABIERTA' || inc.estado === 'EN_PROGRESO'
+    ).length || 0;
     const canManageCampana = user && (user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE');
     const isAnalyst = user && user.role === 'ANALISTA';
     const isAssignedToThisCampana = isAnalyst && campana.analistas_asignados?.some(analyst => analyst.id === user.id);
@@ -104,7 +107,7 @@ function DetalleCampanaPage() {
                             </Nav.Item>
                             <Nav.Item>
                                 <Nav.Link eventKey="incidencias">
-                                    Incidencias <Badge pill bg="danger">{campana.incidencias?.length || 0}</Badge>
+                                Incidencias <Badge pill bg="danger">{incidenciasActivasCount}</Badge>
                                 </Nav.Link>
                             </Nav.Item>
                         </Nav>
