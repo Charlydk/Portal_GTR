@@ -945,9 +945,12 @@ async def crear_tarea(
 @app.get("/tareas/", response_model=List[TareaListOutput], summary="Obtener Tareas (con filtros opcionales) (Protegido)")
 async def obtener_tareas(
     db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista),
     analista_id: Optional[int] = None,
     campana_id: Optional[int] = None,
-    current_analista: models.Analista = Depends(get_current_analista)
+    estado: Optional[ProgresoTarea] = None,
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None
 ):
     """
     Obtiene todas las tareas, o filtra por analista y/o campaña.
@@ -961,11 +964,20 @@ async def obtener_tareas(
 
     if current_analista.role == UserRole.ANALISTA.value:
         query = query.where(models.Tarea.analista_id == current_analista.id)
-    else:
-        if analista_id:
-            query = query.where(models.Tarea.analista_id == analista_id)
-        if campana_id:
-            query = query.where(models.Tarea.campana_id == campana_id)
+    elif analista_id: # Si no es analista, puede filtrar por otros
+        query = query.where(models.Tarea.analista_id == analista_id)
+ # --- INICIO DE CAMBIOS: Aplicar nuevos filtros a la consulta ---
+    if campana_id:
+        query = query.where(models.Tarea.campana_id == campana_id)
+    if estado:
+        query = query.where(models.Tarea.progreso == estado)
+    if fecha_desde:
+        query = query.where(models.Tarea.fecha_vencimiento >= fecha_desde)
+    if fecha_hasta:
+        # Añadimos un día para que la fecha 'hasta' sea inclusiva
+        query = query.where(models.Tarea.fecha_vencimiento < (fecha_hasta + timedelta(days=1)))
+    # --- FIN DE CAMBIOS ---
+   
 
     tareas = await db.execute(query)
     return tareas.scalars().unique().all()
@@ -2274,9 +2286,12 @@ async def create_tarea_generada_por_aviso(
 @app.get("/tareas_generadas_por_avisos/", response_model=List[TareaGeneradaPorAviso], summary="Obtener todas las Tareas Generadas por Avisos (Protegido)")
 async def get_all_tareas_generadas_por_avisos(
     db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista),
     analista_id: Optional[int] = None,
-    aviso_origen_id: Optional[int] = None,
-    current_analista: models.Analista = Depends(get_current_analista)
+    aviso_origen_id: Optional[int] = None, # Mantenemos este por si es útil
+    estado: Optional[ProgresoTarea] = None,
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None
 ):
     """
     Obtiene todas las tareas generadas por avisos, con filtros opcionales.
@@ -2291,12 +2306,21 @@ async def get_all_tareas_generadas_por_avisos(
     )
 
     if current_analista.role == UserRole.ANALISTA.value:
-        query = query.filter(models.TareaGeneradaPorAviso.analista_asignado_id == current_analista.id)
-    else:
-        if analista_id:
-            query = query.filter(models.TareaGeneradaPorAviso.analista_asignado_id == analista_id)
-        if aviso_origen_id:
-            query = query.filter(models.TareaGeneradaPorAviso.aviso_origen_id == aviso_origen_id)
+        query = query.where(models.TareaGeneradaPorAviso.analista_asignado_id == current_analista.id)
+    elif analista_id:
+        query = query.where(models.TareaGeneradaPorAviso.analista_asignado_id == analista_id)
+
+    # --- INICIO DE CAMBIOS: Aplicar nuevos filtros a la consulta ---
+    if aviso_origen_id:
+        query = query.where(models.TareaGeneradaPorAviso.aviso_origen_id == aviso_origen_id)
+    if estado:
+        query = query.where(models.TareaGeneradaPorAviso.progreso == estado)
+    if fecha_desde:
+        query = query.where(models.TareaGeneradaPorAviso.fecha_vencimiento >= fecha_desde)
+    if fecha_hasta:
+        query = query.where(models.TareaGeneradaPorAviso.fecha_vencimiento < (fecha_hasta + timedelta(days=1)))
+    # --- FIN DE CAMBIOS ---
+    
     
     tareas = await db.execute(query)
     return tareas.scalars().unique().all()
