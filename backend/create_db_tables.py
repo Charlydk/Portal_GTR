@@ -1,15 +1,24 @@
 import asyncio
-from database import engine, Base
-from sql_app import models # Importa tus modelos de SQLAlchemy
+from database import engine, Base, DATABASE_URL # Importamos la variable
+
+# --- LÍNEA DE VERIFICACIÓN ---
+print(f"--- [Script create_db] Modificando DB en: {DATABASE_URL} ---")
+# -----------------------------
+
+from sql_app.models import (
+    Analista, Campana, Tarea, ChecklistItem, ComentarioGeneralBitacora,
+    Aviso, AcuseReciboAviso, BitacoraEntry, TareaGeneradaPorAviso,
+    HistorialEstadoTarea, Incidencia, ActualizacionIncidencia
+)
 
 async def create_db_and_tables():
+    print("Conectando para recrear las tablas...")
     async with engine.begin() as conn:
-        # Primero, intenta borrar todas las tablas que SQLAlchemy conoce
-        # CUIDADO: Esto borrará todos los datos en esas tablas
+        print("Borrando tablas antiguas...")
         await conn.run_sync(Base.metadata.drop_all)
-        # Luego, crea todas las tablas
+        print("Creando tablas nuevas...")
         await conn.run_sync(Base.metadata.create_all)
-    print("Tablas de la base de datos recreadas (o creadas) en Supabase.")
+    print("¡Éxito! Las tablas han sido recreadas.")
 
 if __name__ == "__main__":
     asyncio.run(create_db_and_tables())

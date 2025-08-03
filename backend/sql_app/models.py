@@ -37,6 +37,7 @@ class Analista(Base):
     comentarios_generales_bitacora = relationship("ComentarioGeneralBitacora", back_populates="autor")
     incidencias_creadas = relationship("Incidencia", back_populates="creador", foreign_keys='Incidencia.creador_id')
     actualizaciones_incidencia_hechas = relationship("ActualizacionIncidencia", back_populates="autor")
+    incidencias_asignadas = relationship("Incidencia", back_populates="asignado_a", foreign_keys='Incidencia.asignado_a_id')
 
 
 class Campana(Base):
@@ -58,19 +59,15 @@ class Campana(Base):
 
 class Tarea(Base):
     __tablename__ = "tareas"
-
     id = Column(Integer, primary_key=True, index=True)
     titulo = Column(String, nullable=False)
     descripcion = Column(String, nullable=True)
     fecha_vencimiento = Column(DateTime, nullable=False)
-    # CAMBIO: Se mantiene el nombre base "progresotarea"
     progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=False, default=ProgresoTarea.PENDIENTE)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_finalizacion = Column(DateTime, nullable=True)
-    
     analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=True)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=True)
-
     analista = relationship("Analista", back_populates="tareas")
     campana = relationship("Campana", back_populates="tareas")
     checklist_items = relationship("ChecklistItem", back_populates="tarea", cascade="all, delete-orphan")
@@ -82,7 +79,6 @@ class ChecklistItem(Base):
     descripcion = Column(String, nullable=False)
     completado = Column(Boolean, default=False)
     fecha_creacion = Column(DateTime, default=func.now())
-    
     tarea_id = Column(Integer, ForeignKey("tareas.id"), nullable=False)
     tarea = relationship("Tarea", back_populates="checklist_items")
 
@@ -91,10 +87,8 @@ class ComentarioGeneralBitacora(Base):
     id = Column(Integer, primary_key=True, index=True)
     comentario = Column(String, nullable=False)
     fecha_creacion = Column(DateTime, default=func.now())
-    
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
     autor_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
-
     campana = relationship("Campana", back_populates="comentarios_generales")
     autor = relationship("Analista", back_populates="comentarios_generales_bitacora")
 
@@ -107,10 +101,8 @@ class Aviso(Base):
     fecha_vencimiento = Column(DateTime, nullable=True)
     requiere_tarea = Column(Boolean, default=False)
     fecha_vencimiento_tarea = Column(DateTime, nullable=True)
-    
     creador_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=True)
-
     creador = relationship("Analista", back_populates="avisos_creados")
     campana = relationship("Campana", back_populates="avisos")
     acuses_recibo = relationship("AcuseReciboAviso", back_populates="aviso", cascade="all, delete-orphan")
@@ -120,10 +112,8 @@ class AcuseReciboAviso(Base):
     __tablename__ = "acuses_recibo_avisos"
     id = Column(Integer, primary_key=True, index=True)
     fecha_acuse = Column(DateTime, default=func.now())
-    
     aviso_id = Column(Integer, ForeignKey("avisos.id"), nullable=False)
     analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
-
     aviso = relationship("Aviso", back_populates="acuses_recibo")
     analista = relationship("Analista", back_populates="acuses_recibo_avisos")
 
@@ -135,7 +125,6 @@ class BitacoraEntry(Base):
     comentario = Column(String, nullable=True)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_ultima_actualizacion = Column(DateTime, default=func.now(), onupdate=func.now())
-    
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
     campana = relationship("Campana", back_populates="bitacora_entries")
 
@@ -145,14 +134,11 @@ class TareaGeneradaPorAviso(Base):
     titulo = Column(String, nullable=False)
     descripcion = Column(String, nullable=True)
     fecha_vencimiento = Column(DateTime, nullable=True)
-    # CAMBIO: Usamos el nombre base "progresotarea"
     progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=False, default=ProgresoTarea.PENDIENTE)
     fecha_creacion = Column(DateTime, default=func.now())
     fecha_finalizacion = Column(DateTime, nullable=True)
-    
     analista_asignado_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     aviso_origen_id = Column(Integer, ForeignKey("avisos.id"), nullable=True)
-
     analista_asignado = relationship("Analista", back_populates="tareas_generadas_por_avisos")
     aviso_origen = relationship("Aviso", back_populates="tareas_generadas")
     historial_estados = relationship("HistorialEstadoTarea", back_populates="tarea_generada_rel", cascade="all, delete-orphan")
@@ -160,17 +146,13 @@ class TareaGeneradaPorAviso(Base):
 class HistorialEstadoTarea(Base):
     __tablename__ = "historial_estados_tarea"
     id = Column(Integer, primary_key=True, index=True)
-    # CAMBIO: Usamos el nombre base "progresotarea" para ambos
     old_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=True)
     new_progreso = Column(SQLEnum(ProgresoTarea, name="progresotarea"), nullable=False)
     timestamp = Column(DateTime, default=func.now(), nullable=False)
-    
     changed_by_analista_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     changed_by_analista = relationship("Analista")
-    
     tarea_campana_id = Column(Integer, ForeignKey("tareas.id"), nullable=True)
     tarea_generada_id = Column(Integer, ForeignKey("tareas_generadas_por_avisos.id"), nullable=True)
-
     tarea_campana_rel = relationship("Tarea", back_populates="historial_estados")
     tarea_generada_rel = relationship("TareaGeneradaPorAviso", back_populates="historial_estados")
 
@@ -185,9 +167,11 @@ class Incidencia(Base):
     estado = Column(SQLEnum(EstadoIncidencia, name="estadoincidencia"), nullable=False, default=EstadoIncidencia.ABIERTA)
     fecha_apertura = Column(DateTime, default=func.now())
     fecha_cierre = Column(DateTime, nullable=True)
+    asignado_a_id = Column(Integer, ForeignKey("analistas.id"), nullable=True)
     creador_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
     campana_id = Column(Integer, ForeignKey("campanas.id"), nullable=False)
     creador = relationship("Analista", back_populates="incidencias_creadas", foreign_keys=[creador_id])
+    asignado_a = relationship("Analista", back_populates="incidencias_asignadas", foreign_keys=[asignado_a_id])
     campana = relationship("Campana", back_populates="incidencias")
     actualizaciones = relationship("ActualizacionIncidencia", back_populates="incidencia", cascade="all, delete-orphan")
 
