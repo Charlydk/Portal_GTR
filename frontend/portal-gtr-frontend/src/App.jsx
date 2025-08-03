@@ -26,6 +26,8 @@ import ListaIncidenciasPage from './pages/ListaIncidenciasPage';
 import DetalleTareaGeneradaPage from './pages/DetalleTareaGeneradaPage';
 import FormularioIncidenciaPage from './pages/FormularioIncidenciaPage';
 import DetalleIncidenciaPage from './pages/DetalleIncidenciaPage';
+import TareasDisponiblesPage from './pages/TareasDisponiblesPage';
+
 
 
 function App() {
@@ -125,6 +127,17 @@ function App() {
                 </PrivateRoute>
               }
             />
+
+            {/* Tareas Disponibles para Analistas */}
+            <Route
+              path="/tareas/disponibles"
+              element={
+                <PrivateRoute allowedRoles={['ANALISTA']}>
+                  <TareasDisponiblesPage />
+                </PrivateRoute>
+              }
+            />
+
             {/* Crear Checklist Item para Tarea: Accesible por Analistas (sus propias tareas), Supervisores y Responsables */}
             <Route
               path="/tareas/:tareaId/checklist_items/crear"
