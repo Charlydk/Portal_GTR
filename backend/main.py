@@ -897,9 +897,7 @@ async def crear_tarea(
 
     # --- El resto de la función se mantiene igual que la tuya ---
     tarea_data_dict = tarea.model_dump()
-    if tarea_data_dict.get("fecha_vencimiento") is not None:
-        tarea_data_dict["fecha_vencimiento"] = tarea_data_dict["fecha_vencimiento"].replace(tzinfo=None)
-
+    
     db_tarea = models.Tarea(**tarea_data_dict)
     db.add(db_tarea)
     
@@ -1069,10 +1067,7 @@ async def actualizar_tarea(
 
     elif current_analista.role.value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
         for key, value in update_data.items():
-            if key == "fecha_vencimiento" and value is not None:
-                setattr(tarea_existente, key, value.replace(tzinfo=None))
-            else:
-                setattr(tarea_existente, key, value)
+            setattr(tarea_existente, key, value)
     # --- 👆 FIN DE LA CORRECCIÓN ---
 
     if tarea_existente.progreso != old_progreso:

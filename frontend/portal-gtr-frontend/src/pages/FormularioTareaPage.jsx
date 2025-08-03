@@ -66,19 +66,33 @@ function FormularioTareaPage() {
         setCampanas(await campanasResponse.json());
       }
 
-      // If editing, fetch task data
-      if (isEditing) {
+       // If editing, fetch task data
+       if (isEditing) {
         const tareaResponse = await fetch(`${API_BASE_URL}/tareas/${id}`, {
           headers: { 'Authorization': `Bearer ${authToken}` }
         });
         if (!tareaResponse.ok) throw new Error('Error al cargar la tarea.');
         const tareaData = await tareaResponse.json();
+
+        // ## 1. CORRECCIÓN AL CARGAR FECHA PARA EDITAR ##
+        // La API nos da una fecha UTC. Debemos convertirla a un string
+        // de fecha local que el input "datetime-local" pueda entender.
+        let localVencimientoString = '';
+        if (tareaData.fecha_vencimiento) {
+          const utcDate = new Date(tareaData.fecha_vencimiento);
+          // Truco para obtener el formato YYYY-MM-DDTHH:mm local
+          // Restamos el desfase horario para que toISOString() devuelva la hora local
+          utcDate.setMinutes(utcDate.getMinutes() - utcDate.getTimezoneOffset());
+          localVencimientoString = utcDate.toISOString().slice(0, 16);
+        }
+
         setFormData({
           titulo: tareaData.titulo,
           descripcion: tareaData.descripcion || '',
-          fecha_vencimiento: tareaData.fecha_vencimiento ? new Date(tareaData.fecha_vencimiento).toISOString().slice(0, 16) : '',
+          fecha_vencimiento: localVencimientoString, // Usamos el string local
           progreso: tareaData.progreso,
-          analista_id: tareaData.analista_id,
+          // Corregimos para evitar que un valor null se convierta en 0
+          analista_id: tareaData.analista_id || '',
           campana_id: tareaData.campana_id || ''
         });
       }
@@ -108,13 +122,24 @@ function FormularioTareaPage() {
     setSuccess(null);
 
     try {
+      // ## 2. CORRECCIÓN AL ENVIAR LA FECHA ##
+      // El valor de formData.fecha_vencimiento es un string de hora local.
+      // Lo convertimos a un objeto Date (que el navegador interpreta como local)
+      // y luego a un string ISO (formato UTC universal) para la API.
+      const fechaVencimientoUTC = new Date(formData.fecha_vencimiento).toISOString();
+
       const payload = {
         ...formData,
-        analista_id: user.role === 'ANALISTA' ? user.id : parseInt(formData.analista_id),
-        campana_id: formData.campana_id ? parseInt(formData.campana_id) : null, // Convertir a int o null
-        fecha_vencimiento: new Date(formData.fecha_vencimiento).toISOString(),
+        analista_id: formData.analista_id ? parseInt(formData.analista_id) : null,
+        campana_id: formData.campana_id ? parseInt(formData.campana_id) : null,
+        fecha_vencimiento: fechaVencimientoUTC, // Enviamos la fecha en UTC
         progreso: formData.progreso,
       };
+      
+      // Lógica para analistas que se auto-asignan
+      if (user.role === 'ANALISTA') {
+          payload.analista_id = user.id;
+      }
 
       const url = isEditing ? `${API_BASE_URL}/tareas/${id}` : `${API_BASE_URL}/tareas/`;
       const method = isEditing ? 'PUT' : 'POST';
@@ -136,7 +161,7 @@ function FormularioTareaPage() {
       setSuccess(`Tarea ${isEditing ? 'actualizada' : 'creada'} con éxito!`);
       setTimeout(() => {
         setSuccess(null);
-        navigate('/tareas'); // Redirigir a la lista de tareas
+        navigate('/tareas');
       }, 2000);
     } catch (err) {
       console.error("Error submitting form:", err);

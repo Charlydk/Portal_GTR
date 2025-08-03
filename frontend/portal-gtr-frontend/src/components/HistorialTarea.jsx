@@ -20,11 +20,34 @@ const HistorialTarea = ({ historial, isLoading, error }) => {
     return <Alert variant="info" className="mt-3">No hay historial de cambios para esta tarea.</Alert>;
   }
 
-  const formatDateTime = (isoString) => {
-    if (!isoString) return 'N/A';
-    const options = { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' };
-    return new Date(isoString).toLocaleString('es-AR', options);
-  };
+  const formatDateTime = (apiDateString) => {
+    // Si no hay fecha, devuelve N/A
+    if (!apiDateString) {
+        return 'N/A';
+    }
+
+    // --- LA CORRECCIÓN DEFINITIVA ---
+    // Le añadimos la 'Z' al final para forzar a que JavaScript
+    // interprete el string como una fecha en formato UTC universal.
+    const date = new Date(apiDateString + 'Z');
+    // --------------------------------
+
+    // Verificamos si la fecha parseada es válida
+    if (isNaN(date.getTime())) {
+        return 'Fecha inválida';
+    }
+
+    // A partir de aquí, el resto del código funciona como se espera
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0'); // Los meses son de 0 a 11
+    const year = date.getFullYear();
+    
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+
+    return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
+};
 
   const getBadgeVariant = (progreso) => {
     switch (progreso) {
