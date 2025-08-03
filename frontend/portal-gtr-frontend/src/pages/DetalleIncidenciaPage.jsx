@@ -31,7 +31,7 @@ function DetalleIncidenciaPage() {
     };
 
     const fetchIncidencia = useCallback(async () => {
-        setLoading(true);
+        //setLoading(true);
         try {
             const response = await fetch(`${API_BASE_URL}/incidencias/${id}`, {
                 headers: { 'Authorization': `Bearer ${authToken}` },
@@ -72,6 +72,26 @@ function DetalleIncidenciaPage() {
             }
             setNuevoComentario('');
             fetchIncidencia();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleAssignToMe = async () => {
+        setIsSubmitting(true);
+        setError(null);
+        try {
+            const response = await fetch(`${API_BASE_URL}/incidencias/${id}/asignar`, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${authToken}` },
+            });
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || 'No se pudo asignar la incidencia.');
+            }
+            fetchIncidencia(); // Recargar datos para mostrar el nuevo asignado
         } catch (err) {
             setError(err.message);
         } finally {
@@ -127,6 +147,8 @@ function DetalleIncidenciaPage() {
     if (!incidencia) return <Container className="mt-4"><Alert variant="info">Incidencia no encontrada.</Alert></Container>;
 
     const canManageStatus = !!user;
+    const showAssignButton = user && incidencia.asignado_a?.id !== user.id && incidencia.estado !== 'CERRADA';
+
 
     return (
         <Container className="py-5">
@@ -138,9 +160,9 @@ function DetalleIncidenciaPage() {
                 <Card.Body>
                     <Row>
                         <Col md={6}>
-                            <p><strong>Campaña:</strong> <Link to={`/campanas/${incidencia.campana.id}`}>{incidencia.campana.nombre}</Link></p>
+                        <p><strong>Campaña:</strong> <Link to={`/campanas/${incidencia.campana.id}`}>{incidencia.campana.nombre}</Link></p>
                             <p><strong>Creador:</strong> {incidencia.creador.nombre} {incidencia.creador.apellido}</p>
-                            <p><strong>Tipo:</strong> {incidencia.tipo}</p>
+                            <p><strong>Asignado a:</strong> {incidencia.asignado_a ? `${incidencia.asignado_a.nombre} ${incidencia.asignado_a.apellido}` : <span className="text-muted fst-italic">Nadie (Abierta)</span>}</p>
                         </Col>
                         <Col md={6}>
                             <p><strong>Herramienta Afectada:</strong> {incidencia.herramienta_afectada || 'N/A'}</p>
@@ -189,13 +211,19 @@ function DetalleIncidenciaPage() {
                 <Card className="shadow-lg mt-4">
                     <Card.Header as="h4">Gestionar Incidencia</Card.Header>
                     <Card.Body className="text-center">
-                        <p>Cambiar estado de la incidencia:</p>
-                        <Button variant="warning" onClick={() => handleStatusChange('EN_PROGRESO')} disabled={isSubmitting || incidencia.estado === 'EN_PROGRESO'} className="me-2">
-                            Marcar como "En Progreso"
-                        </Button>
+                        <p>Acciones disponibles:</p>
+                        
+                        {/* CAMBIO: Nuevo botón para asignarse la tarea */}
+                        {showAssignButton && (
+                            <Button variant="warning" onClick={handleAssignToMe} disabled={isSubmitting} className="me-2">
+                                {incidencia.asignado_a ? 'Robar y Asignármela' : 'Asignármela'}
+                            </Button>
+                        )}
+                        
                         <Button variant="success" onClick={() => setShowCierreModal(true)} disabled={isSubmitting || incidencia.estado === 'CERRADA'} className="me-2">
                             Cerrar Incidencia
                         </Button>
+                        
                         {incidencia.estado !== 'ABIERTA' && (
                              <Button variant="danger" onClick={() => handleStatusChange('ABIERTA')} disabled={isSubmitting}>
                                 Reabrir Incidencia

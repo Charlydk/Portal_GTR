@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import func
-from datetime import timedelta, date, datetime # Importar datetime
-from typing import Optional, List
+from datetime import timedelta, date, datetime, time
+from typing import Optional, List, Union
 
 # Importamos los modelos de SQLAlchemy (para la DB)
 from sql_app import models
@@ -28,7 +28,8 @@ from schemas.models import (
     TareaGeneradaPorAvisoBase, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAviso, TareaGeneradaPorAvisoSimple,
     HistorialEstadoTareaBase, HistorialEstadoTarea, HistorialEstadoTareaSimple,
     Incidencia, IncidenciaCreate, IncidenciaSimple, IncidenciaEstadoUpdate,
-    ActualizacionIncidencia, ActualizacionIncidenciaBase
+    ActualizacionIncidencia, ActualizacionIncidenciaBase,
+    DashboardStatsAnalista, DashboardStatsSupervisor
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -100,14 +101,15 @@ async def get_current_analista(token: str = Depends(oauth2_scheme), db: AsyncSes
         select(models.Analista)
         .filter(models.Analista.email == token_data.email)
         .options(
-            # CORRECCIÓN: Cargamos explícitamente TODAS las relaciones y sus anidaciones
-            # para prevenir cualquier error de carga perezosa (lazy loading).
             selectinload(models.Analista.campanas_asignadas),
             selectinload(models.Analista.tareas).selectinload(models.Tarea.campana),
             selectinload(models.Analista.avisos_creados).selectinload(models.Aviso.campana),
             selectinload(models.Analista.acuses_recibo_avisos).selectinload(models.AcuseReciboAviso.aviso),
             selectinload(models.Analista.tareas_generadas_por_avisos).selectinload(models.TareaGeneradaPorAviso.aviso_origen),
             selectinload(models.Analista.incidencias_creadas).selectinload(models.Incidencia.campana),
+            # --- CAMBIO CLAVE: Añadimos la carga de la nueva relación ---
+            selectinload(models.Analista.incidencias_asignadas).selectinload(models.Incidencia.campana),
+            # -----------------------------------------------------------
             selectinload(models.Analista.comentarios_generales_bitacora),
             selectinload(models.Analista.actualizaciones_incidencia_hechas)
         )
@@ -317,7 +319,10 @@ async def obtener_analistas(
         selectinload(models.Analista.avisos_creados),
         selectinload(models.Analista.acuses_recibo_avisos),
         selectinload(models.Analista.tareas_generadas_por_avisos),
-        selectinload(models.Analista.incidencias_creadas)
+        selectinload(models.Analista.incidencias_creadas),
+        selectinload(models.Analista.incidencias_asignadas),
+        
+
     )
     result = await db.execute(query)
     analistas = result.scalars().unique().all()
@@ -340,7 +345,8 @@ async def obtener_analista_por_id(
             selectinload(models.Analista.avisos_creados).selectinload(models.Aviso.campana),
             selectinload(models.Analista.acuses_recibo_avisos).selectinload(models.AcuseReciboAviso.aviso),
             selectinload(models.Analista.tareas_generadas_por_avisos).selectinload(models.TareaGeneradaPorAviso.aviso_origen),
-            selectinload(models.Analista.incidencias_creadas).selectinload(models.Incidencia.campana)
+            selectinload(models.Analista.incidencias_creadas).selectinload(models.Incidencia.campana),
+            selectinload(models.Analista.incidencias_asignadas)
         )
     )
     analista = result.scalars().first()
@@ -423,7 +429,9 @@ async def actualizar_analista(
                 selectinload(models.Analista.tareas),
                 selectinload(models.Analista.avisos_creados),
                 selectinload(models.Analista.acuses_recibo_avisos),
-                selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
+                selectinload(models.Analista.tareas_generadas_por_avisos),
+                selectinload(models.Analista.incidencias_creadas),
+                selectinload(models.Analista.incidencias_asignadas)
             )
         )
         analista_to_return = result.scalars().first()
@@ -478,7 +486,9 @@ async def update_analista_password(
                 selectinload(models.Analista.tareas),
                 selectinload(models.Analista.avisos_creados),
                 selectinload(models.Analista.acuses_recibo_avisos),
-                selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
+                selectinload(models.Analista.tareas_generadas_por_avisos),
+                selectinload(models.Analista.incidencias_creadas),
+                selectinload(models.Analista.incidencias_asignadas)
             )
         )
         analista_to_return = result.scalars().first()
@@ -554,7 +564,9 @@ async def asignar_campana_a_analista(
             selectinload(models.Analista.tareas),
             selectinload(models.Analista.avisos_creados),
             selectinload(models.Analista.acuses_recibo_avisos),
-            selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
+            selectinload(models.Analista.tareas_generadas_por_avisos),
+            selectinload(models.Analista.incidencias_creadas),
+            selectinload(models.Analista.incidencias_asignadas)
         )
     )
     analista = analista_result.scalars().first()
@@ -2066,7 +2078,8 @@ async def get_incidencia_by_id(
         .options(
             selectinload(models.Incidencia.creador),
             selectinload(models.Incidencia.campana),
-            selectinload(models.Incidencia.actualizaciones).selectinload(models.ActualizacionIncidencia.autor)
+            selectinload(models.Incidencia.actualizaciones).selectinload(models.ActualizacionIncidencia.autor),
+            selectinload(models.Incidencia.asignado_a) #AGREGUE ESTO POR AQUI
         )
         .filter(models.Incidencia.id == incidencia_id)
     )
@@ -2123,8 +2136,14 @@ async def update_incidencia_estado(
 
     if update_data.estado == EstadoIncidencia.CERRADA:
         db_incidencia.fecha_cierre = update_data.fecha_cierre or datetime.utcnow()
-    else:
+        # CAMBIO: Al cerrar, se desasigna
+        db_incidencia.asignado_a_id = None
+    elif update_data.estado == EstadoIncidencia.ABIERTA:
         db_incidencia.fecha_cierre = None
+        # CAMBIO: Al reabrir, se desasigna para que quede libre
+        db_incidencia.asignado_a_id = None
+    
+    # (El estado EN_PROGRESO ahora se maneja principalmente desde el endpoint de asignar)
 
     comentario_automatico = f"El estado de la incidencia cambió de '{estado_anterior}' a '{update_data.estado.value}'."
     nueva_actualizacion = models.ActualizacionIncidencia(
@@ -2136,18 +2155,46 @@ async def update_incidencia_estado(
 
     await db.commit()
     
-    result = await db.execute(
-        select(models.Incidencia)
-        .options(
-            selectinload(models.Incidencia.creador),
-            selectinload(models.Incidencia.campana),
-            selectinload(models.Incidencia.actualizaciones).selectinload(models.ActualizacionIncidencia.autor)
-        )
-        .filter(models.Incidencia.id == incidencia_id)
-    )
-    incidencia_actualizada = result.scalars().first()
+    return await get_incidencia_by_id(incidencia_id, db, current_analista)
+
+@app.put("/incidencias/{incidencia_id}/asignar", response_model=Incidencia, summary="Asignar una incidencia al usuario actual")
+async def asignar_incidencia_a_usuario_actual(
+    incidencia_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    result = await db.execute(select(models.Incidencia).filter(models.Incidencia.id == incidencia_id))
+    db_incidencia = result.scalars().first()
+    if not db_incidencia:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+
+    analista_anterior_id = db_incidencia.asignado_a_id
     
-    return incidencia_actualizada
+    # Asignamos la incidencia al usuario actual y la ponemos "En Progreso"
+    db_incidencia.asignado_a_id = current_analista.id
+    db_incidencia.estado = EstadoIncidencia.EN_PROGRESO
+
+    # Creamos un comentario automático para el historial
+    if analista_anterior_id:
+        # Necesitamos obtener el nombre del analista anterior para el log
+        res_anterior = await db.execute(select(models.Analista).filter(models.Analista.id == analista_anterior_id))
+        analista_anterior = res_anterior.scalars().first()
+        nombre_anterior = f"{analista_anterior.nombre} {analista_anterior.apellido}" if analista_anterior else f"ID {analista_anterior_id}"
+        comentario = f"Incidencia reasignada de '{nombre_anterior}' a '{current_analista.nombre} {current_analista.apellido}'."
+    else:
+        comentario = f"Incidencia asignada a '{current_analista.nombre} {current_analista.apellido}'."
+
+    nueva_actualizacion = models.ActualizacionIncidencia(
+        comentario=comentario,
+        incidencia_id=incidencia_id,
+        autor_id=current_analista.id
+    )
+    db.add(nueva_actualizacion)
+
+    await db.commit()
+    
+    # Recargamos la incidencia con todas sus relaciones para la respuesta
+    return await get_incidencia_by_id(incidencia_id, db, current_analista)
 
 
 # --- NUEVOS ENDPOINTS PARA TAREAS GENERADAS POR AVISOS ---
@@ -2467,3 +2514,83 @@ async def get_tarea_generada_historial_estados(
     )
     historial = result.scalars().unique().all()
     return historial
+
+
+# --- ENDPOINTS PARA DASHBOARD ---
+
+@app.get(
+    "/dashboard/stats", 
+    response_model=Union[DashboardStatsAnalista, DashboardStatsSupervisor],
+    summary="Obtener estadísticas para el Dashboard según el rol del usuario"
+)
+async def get_dashboard_stats(
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Devuelve un conjunto de estadísticas para el dashboard.
+    - Para ANALISTAS: Devuelve el conteo de incidencias sin asignar, 
+      las asignadas a él y la lista de incidencias activas del día en sus campañas.
+    - Para SUPERVISORES: Devuelve el conteo total de incidencias activas en el sistema.
+    """
+    today_start = datetime.combine(date.today(), time.min)
+    today_end = datetime.combine(date.today(), time.max)
+    
+    # Si el usuario es Supervisor o Responsable
+    if current_analista.role in [UserRole.SUPERVISOR, UserRole.RESPONSABLE]:
+        # Contar todas las incidencias abiertas o en progreso
+        query = select(func.count(models.Incidencia.id)).filter(
+            models.Incidencia.estado.in_([EstadoIncidencia.ABIERTA, EstadoIncidencia.EN_PROGRESO])
+        )
+        result = await db.execute(query)
+        total_activas = result.scalar_one()
+        return DashboardStatsSupervisor(total_incidencias_activas=total_activas)
+
+    # Si el usuario es Analista
+    elif current_analista.role == UserRole.ANALISTA:
+        assigned_campaign_ids = [c.id for c in current_analista.campanas_asignadas]
+        
+        if not assigned_campaign_ids:
+             # Si no tiene campañas, devuelve ceros para evitar errores.
+             return DashboardStatsAnalista(
+                 incidencias_sin_asignar=0,
+                 mis_incidencias_asignadas=0,
+                 incidencias_del_dia=[]
+             )
+
+        # 1. Contar incidencias sin asignar en sus campañas
+        unassigned_query = select(func.count(models.Incidencia.id)).filter(
+            models.Incidencia.campana_id.in_(assigned_campaign_ids),
+            models.Incidencia.asignado_a_id.is_(None)
+        )
+        unassigned_result = await db.execute(unassigned_query)
+        unassigned_count = unassigned_result.scalar_one()
+
+        # 2. Contar incidencias asignadas a él
+        my_assigned_query = select(func.count(models.Incidencia.id)).filter(
+            models.Incidencia.asignado_a_id == current_analista.id
+        )
+        my_assigned_result = await db.execute(my_assigned_query)
+        my_assigned_count = my_assigned_result.scalar_one()
+
+        # 3. Obtener lista de incidencias del día (abiertas o en progreso) en sus campañas
+        daily_incidents_query = select(models.Incidencia).options(
+            selectinload(models.Incidencia.campana)
+        ).filter(
+            models.Incidencia.campana_id.in_(assigned_campaign_ids),
+            models.Incidencia.estado.in_([EstadoIncidencia.ABIERTA, EstadoIncidencia.EN_PROGRESO]),
+            models.Incidencia.fecha_apertura.between(today_start, today_end)
+        ).order_by(models.Incidencia.fecha_apertura.desc())
+        
+        daily_incidents_result = await db.execute(daily_incidents_query)
+        daily_incidents = daily_incidents_result.scalars().unique().all()
+
+        return DashboardStatsAnalista(
+            incidencias_sin_asignar=unassigned_count,
+            mis_incidencias_asignadas=my_assigned_count,
+            incidencias_del_dia=daily_incidents
+        )
+    
+    # Por si acaso, si hay un rol no contemplado
+    raise HTTPException(status_code=403, detail="Rol de usuario no tiene un dashboard definido.")
+

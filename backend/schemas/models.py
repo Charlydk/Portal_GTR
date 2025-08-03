@@ -148,6 +148,7 @@ class TareaSimple(BaseModel):
     id: int
     titulo: str
     progreso: ProgresoTarea
+    fecha_vencimiento: datetime
     class Config:
         from_attributes = True
 
@@ -227,6 +228,7 @@ class Incidencia(BaseModel):
     fecha_apertura: datetime
     fecha_cierre: Optional[datetime] = None
     creador: AnalistaSimple
+    asignado_a: Optional[AnalistaSimple] = None
     campana: "CampanaSimple"
     actualizaciones: List[ActualizacionIncidencia] = []
     class Config:
@@ -315,6 +317,7 @@ class Analista(AnalistaBase):
     acuses_recibo_avisos: List[AcuseReciboAvisoSimple] = []
     tareas_generadas_por_avisos: List[TareaGeneradaPorAvisoSimple] = []
     incidencias_creadas: List[IncidenciaSimple] = []
+    incidencias_asignadas: List[IncidenciaSimple] = []
     class Config:
         from_attributes = True
 
@@ -333,6 +336,14 @@ class AvisoListOutput(BaseModel):
     campana: Optional[CampanaSimple] = None
     class Config:
         from_attributes = True
+
+class DashboardStatsAnalista(BaseModel):
+    incidencias_sin_asignar: int
+    mis_incidencias_asignadas: int
+    incidencias_del_dia: List[IncidenciaSimple] = []
+
+class DashboardStatsSupervisor(BaseModel):
+    total_incidencias_activas: int
 
 # --- Forward References Update ---
 Campana.model_rebuild()
