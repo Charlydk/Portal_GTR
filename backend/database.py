@@ -8,7 +8,7 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # --- LÍNEA DE VERIFICACIÓN ---
-print(f"--- [FastAPI App] Conectando a: {DATABASE_URL} ---")
+print("--- [VERSIÓN NUEVA DEL CÓDIGO] Iniciando configuración de base de datos ---")
 # -----------------------------
 
 if not DATABASE_URL:
