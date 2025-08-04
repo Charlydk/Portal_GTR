@@ -14,11 +14,7 @@ print("--- [VERSIÓN NUEVA DEL CÓDIGO] Iniciando configuración de base de dato
 if not DATABASE_URL:
     raise ValueError("La variable de entorno DATABASE_URL no está configurada.")
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=True,
-    connect_args={"statement_cache_size": 0}
-)
+engine = create_async_engine(DATABASE_URL, echo=True)
 
 AsyncSessionLocal = sessionmaker(
     autocommit=False,
