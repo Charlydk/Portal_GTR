@@ -293,7 +293,9 @@ async def crear_analista(
                 selectinload(models.Analista.tareas),
                 selectinload(models.Analista.avisos_creados),
                 selectinload(models.Analista.acuses_recibo_avisos),
-                selectinload(models.Analista.tareas_generadas_por_avisos) # NUEVO
+                selectinload(models.Analista.tareas_generadas_por_avisos),
+                selectinload(models.Analista.incidencias_creadas),
+                selectinload(models.Analista.incidencias_asignadas)
             )
         )
         analista_to_return = result.scalars().first()
@@ -714,7 +716,8 @@ async def crear_campana(
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
             # CORRECCIÓN: Usar el nuevo nombre de la relación
-            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor),
+            selectinload(models.Campana.incidencias)
         )
     )
     campana_to_return = result.scalars().first()
@@ -806,7 +809,8 @@ async def actualizar_campana(
             selectinload(models.Campana.avisos),
             selectinload(models.Campana.bitacora_entries),
             # CORRECCIÓN: Usar el nuevo nombre de la relación
-            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor)
+            selectinload(models.Campana.comentarios_generales).selectinload(models.ComentarioGeneralBitacora.autor),
+            selectinload(models.Campana.incidencias)
         )
     )
     updated_campana = updated_campana_result.scalars().first()

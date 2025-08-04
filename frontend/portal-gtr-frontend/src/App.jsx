@@ -35,7 +35,7 @@ function App() {
     <Router>
       <AuthProvider> {/* Envuelve toda la aplicación para que el contexto de autenticación esté disponible */}
         <Navbar /> {/* Tu barra de navegación */}
-        <div className="container mt-4">
+        <div className="container mt-4 main-content">
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
