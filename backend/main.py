@@ -51,6 +51,7 @@ origins = [
     "http://127.0.0.1:5173", # Asegúrate de que tu frontend está en este puerto
     "http://localhost:5173",
     "http://127.0.0.1:8000",
+    "https://portal-gtr.onrender.com",
 ]
 
 app.add_middleware(
