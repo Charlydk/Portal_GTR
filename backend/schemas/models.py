@@ -1,7 +1,7 @@
+# schemas/models.py
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime, date, time
 from typing import List, Optional
-# CORRECCIÓN: Importamos TODOS los enums necesarios, incluyendo EstadoIncidencia
 from enums import UserRole, ProgresoTarea, TipoIncidencia, EstadoIncidencia
 
 # --- Schemas Base (para creación y actualización) ---
@@ -100,8 +100,6 @@ class HistorialEstadoTareaBase(BaseModel):
     tarea_campana_id: Optional[int] = None
     tarea_generada_id: Optional[int] = None
 
-# --- NUEVOS SCHEMAS PARA INCIDENCIAS ---
-
 class ActualizacionIncidenciaBase(BaseModel):
     comentario: str
 
@@ -114,7 +112,6 @@ class IncidenciaCreate(BaseModel):
     campana_id: int
     fecha_apertura: Optional[datetime] = None
 
-# CORRECCIÓN: Renombramos el schema para que sea más claro
 class IncidenciaEstadoUpdate(BaseModel):
     estado: EstadoIncidencia
     fecha_cierre: Optional[datetime] = None
@@ -129,6 +126,24 @@ class AnalistaSimple(BaseModel):
     role: UserRole
     class Config:
         from_attributes = True
+
+# ===================================================================
+# IMPORTANTE: Los schemas de ComentarioTarea AHORA ESTÁN AQUÍ,
+#             ANTES de la definición del schema 'Tarea'.
+# ===================================================================
+class ComentarioTareaBase(BaseModel):
+    texto: str
+
+class ComentarioTareaCreate(ComentarioTareaBase):
+    pass
+
+class ComentarioTarea(ComentarioTareaBase):
+    id: int
+    fecha_creacion: datetime
+    autor: AnalistaSimple
+    class Config:
+        from_attributes = True
+# ===================================================================
 
 class ComentarioGeneralBitacora(BaseModel):
     id: int
@@ -198,8 +213,6 @@ class BitacoraEntry(BitacoraEntryBase):
     class Config:
         from_attributes = True
 
-# --- NUEVOS SCHEMAS DE RESPUESTA PARA INCIDENCIAS ---
-
 class ActualizacionIncidencia(ActualizacionIncidenciaBase):
     id: int
     fecha_actualizacion: datetime
@@ -253,6 +266,7 @@ class Tarea(TareaBase):
     campana: Optional[CampanaSimple] = None
     checklist_items: List[ChecklistItemSimple] = []
     historial_estados: List[HistorialEstadoTareaSimple] = []
+    comentarios: List[ComentarioTarea] = []
     class Config:
         from_attributes = True
 
@@ -337,6 +351,10 @@ class AvisoListOutput(BaseModel):
     class Config:
         from_attributes = True
 
+# --- Forward References Update ---
+Campana.model_rebuild()
+Analista.model_rebuild()
+
 class DashboardStatsAnalista(BaseModel):
     incidencias_sin_asignar: int
     mis_incidencias_asignadas: int
@@ -344,7 +362,3 @@ class DashboardStatsAnalista(BaseModel):
 
 class DashboardStatsSupervisor(BaseModel):
     total_incidencias_activas: int
-
-# --- Forward References Update ---
-Campana.model_rebuild()
-Analista.model_rebuild()

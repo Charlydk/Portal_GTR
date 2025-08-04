@@ -42,6 +42,8 @@ class Analista(Base):
     incidencias_creadas = relationship("Incidencia", back_populates="creador", foreign_keys='Incidencia.creador_id')
     actualizaciones_incidencia_hechas = relationship("ActualizacionIncidencia", back_populates="autor")
     incidencias_asignadas = relationship("Incidencia", back_populates="asignado_a", foreign_keys='Incidencia.asignado_a_id')
+    comentarios_tarea = relationship("ComentarioTarea", back_populates="autor")
+
 
 
 class Campana(Base):
@@ -77,6 +79,8 @@ class Tarea(Base):
     campana = relationship("Campana", back_populates="tareas")
     checklist_items = relationship("ChecklistItem", back_populates="tarea", cascade="all, delete-orphan")
     historial_estados = relationship("HistorialEstadoTarea", back_populates="tarea_campana_rel", cascade="all, delete-orphan")
+    comentarios = relationship("ComentarioTarea", back_populates="tarea", cascade="all, delete-orphan")
+
 
 class ChecklistItem(Base):
     __tablename__ = "checklist_items"
@@ -197,3 +201,15 @@ class ActualizacionIncidencia(Base):
     
     incidencia = relationship("Incidencia", back_populates="actualizaciones")
     autor = relationship("Analista", back_populates="actualizaciones_incidencia_hechas")
+    
+class ComentarioTarea(Base):
+    __tablename__ = "comentarios_tarea"
+    id = Column(Integer, primary_key=True, index=True)
+    texto = Column(Text, nullable=False)
+    fecha_creacion = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    
+    tarea_id = Column(Integer, ForeignKey("tareas.id"), nullable=False)
+    autor_id = Column(Integer, ForeignKey("analistas.id"), nullable=False)
+
+    tarea = relationship("Tarea", back_populates="comentarios")
+    autor = relationship("Analista", back_populates="comentarios_tarea")
