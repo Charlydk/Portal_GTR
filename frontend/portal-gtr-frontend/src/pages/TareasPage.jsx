@@ -93,11 +93,13 @@ function TareasPage() {
     }, [authToken, user, filtros]);
 
     useEffect(() => {
-        if (!authLoading && user) {
-            fetchFilterData();
-            fetchAllTasks();
-        }
-    }, [authLoading, user, filtros, fetchAllTasks, fetchFilterData]); // 'filtros' ahora es una dependencia
+      if (!authLoading && user) {
+          fetchFilterData(); // Carga los datos para los selectores
+          fetchAllTasks(); // Hace la primera búsqueda inicial sin filtros
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user]); // Se ejecuta solo una vez cuando el usuario carga
+  
 
     const handleFilterChange = (e) => {
         setFiltros(prev => ({ ...prev, [e.target.name]: e.target.value }));
@@ -137,6 +139,7 @@ function TareasPage() {
                                     <Form.Label>Analista</Form.Label>
                                     <Form.Select name="analistaId" value={filtros.analistaId} onChange={handleFilterChange}>
                                         <option value="">Todos</option>
+                                        <option value="0">Sin Asignar</option>
                                         {analistas.map(a => <option key={a.id} value={a.id}>{a.nombre} {a.apellido}</option>)}
                                     </Form.Select>
                                 </Form.Group>
@@ -147,6 +150,7 @@ function TareasPage() {
                                 <Form.Label>Campaña</Form.Label>
                                 <Form.Select name="campanaId" value={filtros.campanaId} onChange={handleFilterChange}>
                                     <option value="">Todas</option>
+                                    <option value="0">Sin Campaña (Personal)</option>
                                     {campanas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                                 </Form.Select>
                             </Form.Group>
@@ -175,8 +179,13 @@ function TareasPage() {
                                 <Form.Control type="date" name="fechaHasta" value={filtros.fechaHasta} onChange={handleFilterChange} />
                             </Form.Group>
                         </Col>
-                        <Col md={4} className="d-flex align-items-end">
-                            <Button variant="secondary" onClick={clearFilters} className="w-100">Limpiar Filtros</Button>
+                        <Col md={6} className="d-flex align-items-end gap-2">
+                            <Button variant="primary" onClick={fetchAllTasks} className="w-100">
+                                Aplicar Filtros
+                            </Button>
+                            <Button variant="secondary" onClick={clearFilters} className="w-100">
+                                Limpiar Filtros
+                            </Button>
                         </Col>
                     </Row>
                 </Card.Body>

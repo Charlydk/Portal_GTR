@@ -964,11 +964,17 @@ async def obtener_tareas(
 
     if current_analista.role == UserRole.ANALISTA.value:
         query = query.where(models.Tarea.analista_id == current_analista.id)
-    elif analista_id: # Si no es analista, puede filtrar por otros
-        query = query.where(models.Tarea.analista_id == analista_id)
- # --- INICIO DE CAMBIOS: Aplicar nuevos filtros a la consulta ---
-    if campana_id:
-        query = query.where(models.Tarea.campana_id == campana_id)
+    elif analista_id is not None:
+        if analista_id == 0:  # Señal para tareas sin asignar
+            query = query.where(models.Tarea.analista_id.is_(None))
+        else:
+            query = query.where(models.Tarea.analista_id == analista_id)
+
+    if campana_id is not None:
+        if campana_id == 0:  # Señal para tareas sin campaña
+            query = query.where(models.Tarea.campana_id.is_(None))
+        else:
+            query = query.where(models.Tarea.campana_id == campana_id)
     if estado:
         query = query.where(models.Tarea.progreso == estado)
     if fecha_desde:
@@ -2306,9 +2312,14 @@ async def get_all_tareas_generadas_por_avisos(
     )
 
     if current_analista.role == UserRole.ANALISTA.value:
-        query = query.where(models.TareaGeneradaPorAviso.analista_asignado_id == current_analista.id)
-    elif analista_id:
-        query = query.where(models.TareaGeneradaPorAviso.analista_asignado_id == analista_id)
+            query = query.where(models.TareaGeneradaPorAviso.analista_asignado_id == current_analista.id)
+    elif analista_id is not None:
+        if analista_id == 0: # Las tareas generadas siempre tienen analista, pero mantenemos por consistencia
+            return [] # No pueden existir tareas generadas sin analista
+        else:
+                query = query.where(models.TareaGeneradaPorAviso.analista_asignado_id == analista_id)
+    
+    
 
     # --- INICIO DE CAMBIOS: Aplicar nuevos filtros a la consulta ---
     if aviso_origen_id:
