@@ -29,7 +29,8 @@ from schemas.models import (
     HistorialEstadoTareaBase, HistorialEstadoTarea, HistorialEstadoTareaSimple,
     Incidencia, IncidenciaCreate, IncidenciaSimple, IncidenciaEstadoUpdate,
     ActualizacionIncidencia, ActualizacionIncidenciaBase,
-    DashboardStatsAnalista, DashboardStatsSupervisor
+    DashboardStatsAnalista, DashboardStatsSupervisor,
+    ComentarioTarea, ComentarioTareaCreate
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -931,7 +932,9 @@ async def crear_tarea(
             selectinload(models.Tarea.analista),
             selectinload(models.Tarea.campana),
             selectinload(models.Tarea.checklist_items),
-            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista)
+            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista),
+            selectinload(models.Tarea.comentarios).selectinload(models.ComentarioTarea.autor)
+
         )
         .filter(models.Tarea.id == new_tarea_id)
     )
@@ -1002,7 +1005,9 @@ async def obtener_tarea_por_id(
             selectinload(models.Tarea.analista),
             selectinload(models.Tarea.campana),
             selectinload(models.Tarea.checklist_items),
-            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista)
+            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista),
+            selectinload(models.Tarea.comentarios).selectinload(models.ComentarioTarea.autor)
+
         )
     )
     tarea = result.scalars().first()
@@ -1154,6 +1159,44 @@ async def eliminar_tarea(
         )
     return
 
+@app.post("/tareas/{tarea_id}/comentarios", response_model=ComentarioTarea, status_code=status.HTTP_201_CREATED, summary="Añadir un nuevo comentario a una Tarea")
+async def crear_comentario_tarea(
+    tarea_id: int,
+    comentario: ComentarioTareaCreate,
+    db: AsyncSession = Depends(get_db),
+    current_analista: models.Analista = Depends(get_current_analista)
+):
+    """
+    Crea un nuevo comentario para una tarea específica.
+    """
+    # Primero, verificamos que la tarea existe
+    tarea_result = await db.execute(select(models.Tarea).filter(models.Tarea.id == tarea_id))
+    db_tarea = tarea_result.scalars().first()
+    if not db_tarea:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada.")
+
+    # (Opcional pero recomendado) Verificar permisos: El usuario puede ver la tarea?
+    if current_analista.role == UserRole.ANALISTA.value:
+        if db_tarea.analista_id != current_analista.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para comentar en esta tarea.")
+
+    # Creamos el objeto del comentario
+    db_comentario = models.ComentarioTarea(
+        texto=comentario.texto,
+        tarea_id=tarea_id,
+        autor_id=current_analista.id
+    )
+    db.add(db_comentario)
+    await db.commit()
+    await db.refresh(db_comentario)
+
+    # Recargamos el comentario con la relación del autor para la respuesta
+    result = await db.execute(
+        select(models.ComentarioTarea)
+        .options(selectinload(models.ComentarioTarea.autor))
+        .filter(models.ComentarioTarea.id == db_comentario.id)
+    )
+    return result.scalars().first()
 
 # --- Endpoints para checklist tareas (Protegidos) ---
 

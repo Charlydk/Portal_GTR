@@ -15,6 +15,8 @@ function DetalleTareaPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [nuevoComentario, setNuevoComentario] = useState('');
+  const [submittingComentario, setSubmittingComentario] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [submittingProgress, setSubmittingProgress] = useState(false); // Para el spinner de progreso
   const [submittingChecklist, setSubmittingChecklist] = useState(null); // Para el spinner de checklist item
@@ -57,6 +59,35 @@ function DetalleTareaPage() {
     }
   }, [authLoading, user, fetchTarea]);
 
+  const handlePostComentario = async (e) => {
+    e.preventDefault();
+    if (!nuevoComentario.trim()) return;
+
+    setSubmittingComentario(true);
+    setError(null);
+    try {
+        const response = await fetch(`${API_BASE_URL}/tareas/${id}/comentarios`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ texto: nuevoComentario }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'No se pudo publicar el comentario.');
+        }
+        
+        setNuevoComentario(''); // Limpiar el campo de texto
+        await fetchTarea(); // Recargar la tarea para mostrar el nuevo comentario
+    } catch (err) {
+        setError(err.message);
+    } finally {
+        setSubmittingComentario(false);
+    }
+};
 
    const handleFetchHistorial = async () => {
     if (showHistorial) {
@@ -279,22 +310,25 @@ const handleDejarTarea = async () => {
         return 'N/A';
     }
 
-    // --- LA CORRECCIÓN DEFINITIVA ---
-    // Le añadimos la 'Z' al final para forzar a que JavaScript
-    // interprete el string como una fecha en formato UTC universal.
-    const date = new Date(apiDateString + 'Z');
+    // --- LA SOLUCIÓN INTELIGENTE ---
+    // 1. Verificamos si el string de la fecha ya incluye información de zona horaria ('Z' o '+').
+    const isAlreadyUtc = apiDateString.includes('Z') || apiDateString.includes('+');
+
+    // 2. Si NO la tiene, le añadimos la 'Z' para tratarlo como UTC.
+    //    Si YA la tiene, lo usamos tal cual está.
+    const date = new Date(isAlreadyUtc ? apiDateString : apiDateString + 'Z');
     // --------------------------------
 
     // Verificamos si la fecha parseada es válida
     if (isNaN(date.getTime())) {
-        return 'Fecha inválida';
+        // Hacemos el error un poco más informativo para futuras depuraciones
+        return `Fecha inválida (${apiDateString})`;
     }
 
-    // A partir de aquí, el resto del código funciona como se espera
+    // Estos métodos devuelven los componentes en la hora local del navegador
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0'); // Los meses son de 0 a 11
     const year = date.getFullYear();
-    
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
@@ -544,7 +578,56 @@ const handleDejarTarea = async () => {
         </Card.Body>
       </Card>
 
-      {/* Modal de Confirmación de Eliminación */}
+      <Card className="shadow-lg mt-4">
+    <Card.Header as="h4">Comentarios</Card.Header>
+    <Card.Body>
+        <ListGroup variant="flush" className="mb-3">
+            {tarea.comentarios && tarea.comentarios.length > 0 ? (
+                
+                tarea.comentarios.map(comentario => {
+                    // --- PRUEBA DE DIAGNÓSTICO ---
+                    console.log("Valor de fecha_creacion del comentario:", comentario.fecha_creacion);
+                    // -----------------------------
+                    
+                    return (
+                        <ListGroup.Item key={comentario.id} className="px-0">
+                            <p className="mb-1">{comentario.texto}</p>
+                            <small className="text-muted">
+                                Por: <strong>{comentario.autor.nombre} {comentario.autor.apellido}</strong>
+                            </small>
+                            <small className="text-muted" style={{ float: 'right' }}>
+                                {formatDateTime(comentario.fecha_creacion)}
+                            </small>
+                        </ListGroup.Item>
+                    );
+                })
+
+            ) : (
+                <p className="text-muted">No hay comentarios en esta tarea. ¡Sé el primero en añadir uno!</p>
+            )}
+        </ListGroup>
+
+        <Form onSubmit={handlePostComentario}>
+            <Form.Group>
+                <Form.Label>Añadir un nuevo comentario</Form.Label>
+                <Form.Control 
+                    as="textarea" 
+                    rows={3}
+                    value={nuevoComentario}
+                    onChange={(e) => setNuevoComentario(e.target.value)}
+                    placeholder="Escribe tu comentario aquí..."
+                    required
+                    disabled={submittingComentario}
+                />
+            </Form.Group>
+            <Button variant="primary" type="submit" className="mt-2" disabled={submittingComentario}>
+                {submittingComentario ? <Spinner as="span" size="sm" /> : 'Publicar Comentario'}
+            </Button>
+        </Form>
+    </Card.Body>
+</Card>
+
+      {/* Modal de Confirmación de Eliminación (esto se queda al final) */}
       <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)}>
         <Modal.Header closeButton>
           <Modal.Title>Confirmar Eliminación</Modal.Title>
@@ -558,11 +641,7 @@ const handleDejarTarea = async () => {
           </Button>
           <Button variant="danger" onClick={handleDeleteTarea} disabled={submittingProgress}>
             {submittingProgress ? (
-              <>
-                <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
-                {' '}
-                Eliminando...
-              </>
+              <><Spinner as="span" animation="border" size="sm" />{' '}Eliminando...</>
             ) : (
               'Eliminar'
             )}
