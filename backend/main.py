@@ -67,9 +67,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @app.on_event("startup")
 async def startup_event():
+    """
+    # --- VAMOS A DESACTIVAR ESTO TEMPORALMENTE ---
     async with engine.begin() as conn:
         await conn.run_sync(models.Base.metadata.create_all)
     print("Base de datos y tablas verificadas/creadas al iniciar la aplicación.")
+    """
+    # Simplemente imprimimos un mensaje para saber que el evento se ejecutó
+    print("Evento de inicio de la aplicación ejecutado (creación de tablas desactivada).")
 
 # --- Funciones de Utilidad para Autenticación ---
 
