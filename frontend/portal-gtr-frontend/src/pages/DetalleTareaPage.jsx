@@ -5,6 +5,7 @@ import { Container, Card, Button, Alert, Spinner, ListGroup, Badge, Modal, Form 
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
 import HistorialTarea from '../components/HistorialTarea';
+import { formatDateTime } from '../utils/dateFormatter';
 
 function DetalleTareaPage() {
   const { id } = useParams();
@@ -303,39 +304,7 @@ const handleDejarTarea = async () => {
       setSubmittingProgress(false);
     }
   };
-
-  const formatDateTime = (apiDateString) => {
-    // Si no hay fecha, devuelve N/A
-    if (!apiDateString) {
-        return 'N/A';
-    }
-
-    // --- LA SOLUCIÓN INTELIGENTE ---
-    // 1. Verificamos si el string de la fecha ya incluye información de zona horaria ('Z' o '+').
-    const isAlreadyUtc = apiDateString.includes('Z') || apiDateString.includes('+');
-
-    // 2. Si NO la tiene, le añadimos la 'Z' para tratarlo como UTC.
-    //    Si YA la tiene, lo usamos tal cual está.
-    const date = new Date(isAlreadyUtc ? apiDateString : apiDateString + 'Z');
-    // --------------------------------
-
-    // Verificamos si la fecha parseada es válida
-    if (isNaN(date.getTime())) {
-        // Hacemos el error un poco más informativo para futuras depuraciones
-        return `Fecha inválida (${apiDateString})`;
-    }
-
-    // Estos métodos devuelven los componentes en la hora local del navegador
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0'); // Los meses son de 0 a 11
-    const year = date.getFullYear();
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-
-    return `${day}/${month}/${year}, ${hours}:${minutes}:${seconds}`;
-};
-
+  
   if (authLoading || loading) {
     return (
       <Container className="d-flex justify-content-center align-items-center min-vh-100 bg-light">
