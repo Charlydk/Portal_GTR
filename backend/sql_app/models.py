@@ -178,7 +178,7 @@ class Incidencia(Base):
     descripcion_inicial = Column(Text, nullable=False)
     herramienta_afectada = Column(String, nullable=True)
     indicador_afectado = Column(String, nullable=True)
-    tipo = Column(SQLEnum(TipoIncidencia), nullable=False)
+    tipo = Column(SQLEnum(TipoIncidencia, name="tipoincidencia_inc"), nullable=False)
     estado = Column(SQLEnum(EstadoIncidencia), nullable=False, default=EstadoIncidencia.ABIERTA)
     fecha_apertura = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     fecha_cierre = Column(DateTime(timezone=True), nullable=True)
