@@ -104,20 +104,6 @@ const BitacoraCampana = ({ campanaId, campanaNombre }) => {
     }
   };
 
-  // ELIMINADO: La función handleGeneralCommentSubmit ya no es necesaria
-  // const handleGeneralCommentSubmit = async (e) => { ... };
-
-  const handleIncidenciaSuccess = () => {
-    setSuccess('Incidencia registrada con éxito!');
-    fetchBitacoraEntries();
-    setTimeout(() => { setSuccess(null); }, 5000);
-  };
-
-  const handleIncidenciaError = (err) => {
-    setError(err.message);
-    setTimeout(() => { setError(null); }, 5000);
-  };
-
   if (loading) {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '200px' }}>
