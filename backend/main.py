@@ -1949,29 +1949,37 @@ async def create_bitacora_entry(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
+    # Primero, validamos que la campaña a la que se asocia la entrada existe.
     campana_existente_result = await db.execute(select(models.Campana).filter(models.Campana.id == entry.campana_id))
-    campana_existente = campana_existente_result.scalars().first()
-    if not campana_existente:
+    if not campana_existente_result.scalars().first():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaña no encontrada.")
 
-    if current_analista.role == UserRole.ANALISTA.value:
-        analista_with_campanas_result = await db.execute(
-            select(models.Analista)
-            .filter(models.Analista.id == current_analista.id)
-            .options(selectinload(models.Analista.campanas_asignadas))
+    # (Opcional pero recomendado) Validar permisos
+    if current_analista.role.value == UserRole.ANALISTA.value:
+        # Verificar si el analista está asignado a la campaña
+        is_assigned_result = await db.execute(
+            select(models.analistas_campanas).filter_by(analista_id=current_analista.id, campana_id=entry.campana_id)
         )
-        analista_with_campanas = analista_with_campanas_result.scalars().first()
-        if not analista_with_campanas or campana_existente not in analista_with_campanas.campanas_asignadas:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear entradas de bitácora en esta campana.")
+        if not is_assigned_result.first():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para crear entradas de bitácora en esta campaña.")
     
-    db_entry = models.BitacoraEntry(
-        campana_id=entry.campana_id,
-        fecha=entry.fecha,
-        hora=entry.hora,
-        comentario=entry.comentario,
-    )
+    # Creamos el objeto de la base de datos con todos los datos del schema
+    db_entry = models.BitacoraEntry(**entry.model_dump())
+    
     db.add(db_entry)
     
+    # Usamos un bloque try/except para guardar de forma segura
+    try:
+        await db.commit()
+        await db.refresh(db_entry)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error inesperado al crear la entrada de bitácora: {e}"
+        )
+    
+    # Recargamos la entrada con sus relaciones para devolver una respuesta completa
     result = await db.execute(
         select(models.BitacoraEntry)
         .options(selectinload(models.BitacoraEntry.campana))
@@ -1979,7 +1987,7 @@ async def create_bitacora_entry(
     )
     entry_to_return = result.scalars().first()
     if not entry_to_return:
-        raise HTTPException(status_code=500, detail="No se pudo recargar la entrada de bitácora.")
+        raise HTTPException(status_code=500, detail="No se pudo recargar la entrada de bitácora después de la creación.")
         
     return entry_to_return
 

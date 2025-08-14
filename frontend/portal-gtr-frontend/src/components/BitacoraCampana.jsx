@@ -3,8 +3,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { Card, Form, Button, Alert, Spinner, Table, Badge, Row, Col } from 'react-bootstrap';
-import RegistroIncidenciaForm from './RegistroIncidenciaForm';
-// NUEVO: Importamos el nuevo componente de historial
 import HistorialComentarios from './HistorialComentarios';
 
 const BitacoraCampana = ({ campanaId, campanaNombre }) => {
@@ -167,10 +165,7 @@ const BitacoraCampana = ({ campanaId, campanaNombre }) => {
           </Button>
         </Form>
       </Card>
-
-      {user && (
-        <RegistroIncidenciaForm campanaId={campanaId} onSuccess={handleIncidenciaSuccess} onError={handleIncidenciaError} />
-      )}
+     
 
       <Card className="shadow-sm p-4">
         <h4 className="mb-4 text-secondary">Entradas de Bitácora para {currentDate}</h4>
