@@ -30,7 +30,8 @@ from schemas.models import (
     Incidencia, IncidenciaCreate, IncidenciaSimple, IncidenciaEstadoUpdate,
     ActualizacionIncidencia, ActualizacionIncidenciaBase,
     DashboardStatsAnalista, DashboardStatsSupervisor,
-    ComentarioTarea, ComentarioTareaCreate
+    ComentarioTarea, ComentarioTareaCreate,
+    AnalistaSimple
 )
 
 # Importamos la función para obtener la sesión de la DB y el engine
@@ -1008,41 +1009,71 @@ async def obtener_tarea_por_id(
     db: AsyncSession = Depends(get_db),
     current_analista: models.Analista = Depends(get_current_analista)
 ):
-    result = await db.execute(
-        select(models.Tarea)
-        .filter(models.Tarea.id == tarea_id)
-        .options(
-            selectinload(models.Tarea.analista),
-            selectinload(models.Tarea.campana),
-            selectinload(models.Tarea.checklist_items),
-            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista),
-            selectinload(models.Tarea.comentarios).selectinload(models.ComentarioTarea.autor)
-
-        )
-    )
-    tarea = result.scalars().first()
+    """
+    Obtiene una tarea específica por su ID.
+    Construye la respuesta manualmente para evitar errores de carga asíncrona.
+    """
+    # Paso 1: Obtener el objeto Tarea principal de la base de datos.
+    result = await db.execute(select(models.Tarea).filter(models.Tarea.id == tarea_id))
+    tarea_db = result.scalars().first()
     
-    if not tarea:
+    if not tarea_db:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarea no encontrada.")
     
-    # --- CAMBIO CLAVE: Nueva lógica de permisos para analistas ---
-    if current_analista.role == UserRole.ANALISTA.value:
-        is_assigned_to_task = tarea.analista_id == current_analista.id
-        
-        is_task_in_assigned_campaign = False
-        # Si la tarea no está asignada y pertenece a una campaña...
-        if tarea.analista_id is None and tarea.campana_id is not None:
-            # Verificamos si la campaña de la tarea está en la lista de campañas del analista
-            assigned_campaign_ids = [c.id for c in current_analista.campanas_asignadas]
-            if tarea.campana_id in assigned_campaign_ids:
-                is_task_in_assigned_campaign = True
-
-        # El analista puede ver la tarea SOLO si está asignado a ella
-        # O si la tarea está libre en una de sus campañas.
-        if not is_assigned_to_task and not is_task_in_assigned_campaign:
+    # Paso 2: Verificar los permisos.
+    if current_analista.role.value == UserRole.ANALISTA.value:
+        if tarea_db.analista_id is not None and tarea_db.analista_id != current_analista.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para ver esta tarea.")
 
-    return tarea
+    # Paso 3: Cargar todas las relaciones necesarias en consultas separadas.
+    analista, campana = None, None
+    if tarea_db.analista_id:
+        analista_result = await db.execute(select(models.Analista).filter(models.Analista.id == tarea_db.analista_id))
+        analista = analista_result.scalars().first()
+    if tarea_db.campana_id:
+        campana_result = await db.execute(select(models.Campana).filter(models.Campana.id == tarea_db.campana_id))
+        campana = campana_result.scalars().first()
+    
+    historial_result = await db.execute(
+        select(models.HistorialEstadoTarea)
+        .filter(models.HistorialEstadoTarea.tarea_campana_id == tarea_id)
+        .options(selectinload(models.HistorialEstadoTarea.changed_by_analista)) # Eager load del analista en el historial
+    )
+    historial = historial_result.scalars().all()
+
+    checklist_result = await db.execute(
+        select(models.ChecklistItem).filter(models.ChecklistItem.tarea_id == tarea_id)
+    )
+    checklist_items = checklist_result.scalars().all()
+    
+    comentarios_result = await db.execute(
+        select(models.ComentarioTarea)
+        .filter(models.ComentarioTarea.tarea_id == tarea_id)
+        .options(selectinload(models.ComentarioTarea.autor)) # Cargar el autor de cada comentario
+        .order_by(models.ComentarioTarea.fecha_creacion.desc()) # Ordenar por más reciente
+    )
+    comentarios = comentarios_result.scalars().all()
+
+    # Paso 4: Construir el objeto de respuesta Pydantic manualmente.
+    tarea_response = Tarea(
+        id=tarea_db.id,
+        titulo=tarea_db.titulo,
+        descripcion=tarea_db.descripcion,
+        fecha_vencimiento=tarea_db.fecha_vencimiento,
+        progreso=tarea_db.progreso,
+        analista_id=tarea_db.analista_id,
+        campana_id=tarea_db.campana_id,
+        fecha_finalizacion=tarea_db.fecha_finalizacion,
+        fecha_creacion=tarea_db.fecha_creacion,
+        analista=AnalistaSimple.model_validate(analista) if analista else None,
+        campana=CampanaSimple.model_validate(campana) if campana else None,
+        # Usamos model_validate para convertir los objetos SQLAlchemy a Pydantic
+        checklist_items=[ChecklistItemSimple.model_validate(item) for item in checklist_items],
+        historial_estados=[HistorialEstadoTarea.model_validate(h) for h in historial],
+        comentarios=[ComentarioTarea.model_validate(c) for c in comentarios]
+    )
+
+    return tarea_response
 
 
 @app.put("/tareas/{tarea_id}", response_model=Tarea, summary="Actualizar una Tarea existente (Protegido)")
@@ -1065,45 +1096,43 @@ async def actualizar_tarea(
     update_data = tarea_update.model_dump(exclude_unset=True)
     old_progreso = tarea_existente.progreso
 
-# --- 👇 PEGA ESTE NUEVO BLOQUE COMPLETO 👇 ---
+    # --- LÓGICA DE ACTUALIZACIÓN MEJORADA ---
     if current_analista.role.value == UserRole.ANALISTA.value:
-        is_owner = tarea_existente.analista_id == current_analista.id
-        is_unassigned = tarea_existente.analista_id is None
-
-        # Caso 1: Analista está tomando una tarea del pool
-        if is_unassigned and "analista_id" in update_data and update_data["analista_id"] == current_analista.id:
-            tarea_existente.analista_id = current_analista.id
-            # Opcional: Cambiar automáticamente el progreso a "EN PROGRESO"
-            if tarea_existente.progreso == ProgresoTarea.PENDIENTE.value:
-                tarea_existente.progreso = ProgresoTarea.EN_PROGRESO.value
-
-        # Caso 2: Analista es dueño de la tarea y la está actualizando o liberando
-        elif is_owner:
-            # Subcaso 2.1: Liberando la tarea
-            if "analista_id" in update_data and update_data["analista_id"] is None:
-                tarea_existente.analista_id = None
-                tarea_existente.progreso = ProgresoTarea.PENDIENTE.value # Revertir a pendiente
-
-            # Subcaso 2.2: Actualizando el progreso (si no la está liberando)
-            elif "progreso" in update_data:
-                tarea_existente.progreso = update_data["progreso"]
-
-            # Siempre puede actualizar la descripción
-            if "descripcion" in update_data:
-                tarea_existente.descripcion = update_data["descripcion"]
-
-        # Caso 3: Intento no permitido
-        else:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tienes permiso para modificar esta tarea.")
-    # --- 👆 FIN DEL NUEVO BLOQUE 👆 ---
+        # Un analista solo puede modificar tareas que le pertenecen o que están sin asignar.
+        if tarea_existente.analista_id is not None and tarea_existente.analista_id != current_analista.id:
+             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No puedes modificar una tarea que no es tuya.")
+        
+        # Iteramos sobre los datos que se quieren actualizar
+        for key, value in update_data.items():
+            if key == "analista_id":
+                # Un analista puede:
+                # 1. Asignarse una tarea (value == su propio id)
+                # 2. Liberar una tarea (value is None)
+                if value is None or value == current_analista_id:
+                    tarea_existente.analista_id = value
+                else:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un analista no puede asignar tareas a otros.")
+            
+            elif key in ["progreso", "descripcion"]:
+                 setattr(tarea_existente, key, value)
+            
+            else:
+                 # Si un analista intenta modificar otro campo, lanzamos un error.
+                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No tienes permiso para modificar el campo '{key}'.")
 
 
     elif current_analista.role.value in [UserRole.SUPERVISOR.value, UserRole.RESPONSABLE.value]:
+        # Supervisor/Responsable pueden modificar cualquier campo.
         for key, value in update_data.items():
-            setattr(tarea_existente, key, value)
-    # --- 👆 FIN DE LA CORRECCIÓN ---
-
-    if tarea_existente.progreso != old_progreso:
+            if key == "fecha_vencimiento" and value is not None:
+                setattr(tarea_existente, key, value.replace(tzinfo=None))
+            else:
+                setattr(tarea_existente, key, value)
+    
+    # --- FIN DE LA LÓGICA DE ACTUALIZACIÓN ---
+    
+    # El resto de la función (historial, commit y construcción de respuesta) sigue igual.
+    if "progreso" in update_data and tarea_existente.progreso != old_progreso:
         historial_entry = models.HistorialEstadoTarea(
             old_progreso=old_progreso,
             new_progreso=tarea_existente.progreso,
@@ -1128,17 +1157,50 @@ async def actualizar_tarea(
             detail=f"Error inesperado al actualizar tarea: {e}"
         )
     
-    result = await db.execute(
-        select(models.Tarea)
-        .filter(models.Tarea.id == tarea_existente.id)
-        .options(
-            selectinload(models.Tarea.analista),
-            selectinload(models.Tarea.campana),
-            selectinload(models.Tarea.checklist_items),
-            selectinload(models.Tarea.historial_estados).selectinload(models.HistorialEstadoTarea.changed_by_analista)
-        )
+    # Usamos el patrón de carga manual para evitar el error MissingGreenlet
+    analista, campana = None, None
+    if tarea_existente.analista_id:
+        analista = await db.get(models.Analista, tarea_existente.analista_id)
+    if tarea_existente.campana_id:
+        campana = await db.get(models.Campana, tarea_existente.campana_id)
+    
+    historial_result = await db.execute(
+        select(models.HistorialEstadoTarea)
+        .filter(models.HistorialEstadoTarea.tarea_campana_id == tarea_id)
+        .options(selectinload(models.HistorialEstadoTarea.changed_by_analista))
     )
-    return result.scalars().first()
+    historial = historial_result.scalars().all()
+
+    checklist_result = await db.execute(
+        select(models.ChecklistItem).filter(models.ChecklistItem.tarea_id == tarea_id)
+    )
+    checklist_items = checklist_result.scalars().all()
+    
+    comentarios_result = await db.execute(
+        select(models.ComentarioTarea)
+        .filter(models.ComentarioTarea.tarea_id == tarea_id)
+        .options(selectinload(models.ComentarioTarea.autor))
+        .order_by(models.ComentarioTarea.fecha_creacion.desc())
+    )
+    comentarios = comentarios_result.scalars().all()
+
+    tarea_response = Tarea(
+        id=tarea_existente.id,
+        titulo=tarea_existente.titulo,
+        descripcion=tarea_existente.descripcion,
+        fecha_vencimiento=tarea_existente.fecha_vencimiento,
+        progreso=tarea_existente.progreso,
+        analista_id=tarea_existente.analista_id,
+        campana_id=tarea_existente.campana_id,
+        fecha_finalizacion=tarea_existente.fecha_finalizacion,
+        fecha_creacion=tarea_existente.fecha_creacion,
+        analista=AnalistaSimple.model_validate(analista) if analista else None,
+        campana=CampanaSimple.model_validate(campana) if campana else None,
+        checklist_items=[ChecklistItemSimple.model_validate(item) for item in checklist_items],
+        historial_estados=[HistorialEstadoTarea.model_validate(h) for h in historial],
+        comentarios=[ComentarioTarea.model_validate(c) for c in comentarios]
+    )
+    return tarea_response
 
 @app.delete("/tareas/{tarea_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Eliminar una Tarea (Protegido por Supervisor)")
 async def eliminar_tarea(

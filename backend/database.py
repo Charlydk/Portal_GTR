@@ -17,7 +17,11 @@ if not DATABASE_URL:
 engine = create_async_engine(
     DATABASE_URL,
     echo=True,
-    connect_args={"statement_cache_size": 0}
+    pool_size=5,             # Número de conexiones a mantener en el pool.
+    max_overflow=10,         # Conexiones extra que se pueden abrir si el pool está lleno.
+    pool_timeout=30,         # Tiempo en segundos para esperar una conexión del pool.
+    pool_recycle=1800,       # Recicla conexiones cada 30 minutos (1800s), antes de que Supabase las cierre.
+    pool_pre_ping=True       # Verifica que la conexión esté viva antes de usarla.
 )
 
 AsyncSessionLocal = sessionmaker(
