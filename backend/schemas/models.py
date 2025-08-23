@@ -335,12 +335,9 @@ class Analista(AnalistaBase):
     class Config:
         from_attributes = True
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
 
-class TokenData(BaseModel):
-    email: Optional[str] = None
+
+
 
 class AvisoListOutput(BaseModel):
     id: int
