@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from services import geovictoria_service
 from datetime import datetime, date
-from typing import List
+from typing import List, Optional
 
 from database import get_db
 from dependencies import get_current_analista
@@ -16,6 +16,32 @@ class ConsultaHHEE(BaseModel):
     rut: str
     fecha_inicio: date
     fecha_fin: date
+    
+class ValidacionDia(BaseModel):
+    # Datos que necesitamos para identificar el día
+    rut_con_formato: str
+    fecha: date
+    nombre_apellido: str
+    campaña: Optional[str] = None
+
+    # Datos de la validación del usuario
+    hhee_aprobadas_inicio: float = 0
+    hhee_aprobadas_fin: float = 0
+    hhee_aprobadas_descanso: float = 0
+    turno_es_incorrecto: bool = False
+    nota: Optional[str] = None
+
+    # Datos de referencia de GeoVictoria
+    inicio_turno_teorico: Optional[str] = None
+    fin_turno_teorico: Optional[str] = None
+    marca_real_inicio: Optional[str] = None
+    marca_real_fin: Optional[str] = None
+    hhee_inicio_calculadas: Optional[float] = None
+    hhee_fin_calculadas: Optional[float] = None
+    cantidad_hhee_calculadas: Optional[float] = None
+
+class CargarHHEERequest(BaseModel):
+    validaciones: List[ValidacionDia]
 
 router = APIRouter(
     prefix="/hhee",
@@ -27,7 +53,7 @@ async def consultar_empleado(
     consulta: ConsultaHHEE,
     db: AsyncSession = Depends(get_db),
     current_user: models.Analista = Depends(get_current_analista)
-):
+    ):
     token = await geovictoria_service.obtener_token_geovictoria()
     if not token:
         raise HTTPException(status_code=503, detail="No se pudo comunicar con el servicio externo (GeoVictoria).")
@@ -88,3 +114,60 @@ async def consultar_empleado(
         "datos_periodo": resultados_finales,
         "nombre_agente": nombre_agente
     }
+    
+@router.post("/cargar-hhee", summary="Guarda o actualiza las validaciones de HHEE")
+async def cargar_horas_extras(
+    request_body: CargarHHEERequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.Analista = Depends(get_current_analista)
+):
+    mensajes_respuesta = []
+    for validacion in request_body.validaciones:
+        # Buscamos si ya existe una validación para ese RUT y fecha
+        query = select(models.ValidacionHHEE).filter_by(
+            rut=validacion.rut_con_formato, 
+            fecha_hhee=validacion.fecha
+        )
+        result = await db.execute(query)
+        db_validacion_existente = result.scalars().first()
+
+        if validacion.turno_es_incorrecto:
+            datos_para_bd = {
+                "estado": "Pendiente por Corrección",
+                "notas": validacion.nota,
+                "cantidad_hhee_aprobadas": 0
+            }
+        else:
+            datos_para_bd = {
+                "estado": "Validado",
+                "notas": None,
+                "cantidad_hhee_aprobadas": validacion.hhee_aprobadas_inicio + validacion.hhee_aprobadas_fin + validacion.hhee_aprobadas_descanso
+            }
+
+        if db_validacion_existente:
+            # Si existe, actualizamos
+            for key, value in datos_para_bd.items():
+                setattr(db_validacion_existente, key, value)
+            mensajes_respuesta.append(f"Día {validacion.fecha}: actualizado.")
+        else:
+            # Si no existe, creamos uno nuevo
+            nuevos_datos = {
+                "rut": validacion.rut_con_formato,
+                "nombre_apellido": validacion.nombre_apellido,
+                "campaña": validacion.campaña,
+                "fecha_hhee": validacion.fecha,
+                "supervisor_carga": current_user.email,
+                **datos_para_bd # Añadimos los datos de estado y notas
+            }
+            db_validacion_nueva = models.ValidacionHHEE(**nuevos_datos)
+            db.add(db_validacion_nueva)
+            mensajes_respuesta.append(f"Día {validacion.fecha}: guardado.")
+
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al guardar en la base de datos: {e}")
+
+    mensaje_final = " | ".join(mensajes_respuesta) if mensajes_respuesta else "No se enviaron validaciones."
+    return {"mensaje": f"Proceso finalizado. Resumen: {mensaje_final}"}

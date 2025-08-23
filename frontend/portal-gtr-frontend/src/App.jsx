@@ -27,6 +27,7 @@ import DetalleTareaGeneradaPage from './pages/DetalleTareaGeneradaPage';
 import FormularioIncidenciaPage from './pages/FormularioIncidenciaPage';
 import DetalleIncidenciaPage from './pages/DetalleIncidenciaPage';
 import TareasDisponiblesPage from './pages/TareasDisponiblesPage';
+import PortalHHEEPage from './pages/hhee/PortalHHEEPage';
 
 
 
@@ -291,6 +292,15 @@ function App() {
                 </PrivateRoute>
               }
             /> 
+            {/* Rutas del portal de hhee */}
+            <Route
+                path="/hhee/portal"
+                element={
+                  <PrivateRoute allowedRoles={['SUPERVISOR', 'RESPONSABLE']}>
+                    <PortalHHEEPage />
+                  </PrivateRoute>
+                }
+              />
 
             {/* Ruta para el caso de página no encontrada */}
             <Route path="*" element={<div>404 - Página no encontrada</div>} />

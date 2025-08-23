@@ -4,14 +4,21 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
+import os
+from dotenv import load_dotenv
+
+# --- CARGA SEGURA DE LA CLAVE SECRETA ---
+load_dotenv() # Carga las variables del archivo .env
+
+# Usamos os.getenv para leer la clave. Si no existe, usamos una por defecto (SOLO para desarrollo).
+SECRET_KEY = os.getenv("SECRET_KEY", "una-clave-secreta-por-defecto-muy-larga-y-dificil")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 # El token expira en 30 minutos
+# --- FIN DE LA CARGA SEGURA ---
+
 
 # Configuración para el hash de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Configuración para JWT
-SECRET_KEY = "tu_super_secreto_jwt" # ¡CAMBIA ESTO EN PRODUCCIÓN!
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30 # El token expira en 30 minutos
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verifica si una contraseña plana coincide con una encriptada."""
