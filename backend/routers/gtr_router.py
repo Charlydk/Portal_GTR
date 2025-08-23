@@ -1,19 +1,39 @@
 # /backend/routers/gtr_router.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy import or_
-from typing import List, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from typing import List, Optional, Union
 
-# --- Imports necesarios para las rutas del GTR ---
+# --- Imports de la aplicación ---
 from database import get_db
 from sql_app import models
-from enums import UserRole, ProgresoTarea
-from schemas.models import Tarea, TareaListOutput, TareaUpdate, TareaSimple, Campana, ComentarioTarea, ComentarioTareaCreate, AnalistaSimple, CampanaSimple, ChecklistItemSimple, HistorialEstadoTarea
-from main import get_current_analista # Importamos la función de dependencia desde main
+from enums import UserRole, ProgresoTarea, EstadoIncidencia
+from dependencies import get_current_analista, require_role # <-- Apuntando al lugar correcto
+
+# --- IMPORTS COMPLETOS DE SCHEMAS PARA GTR ---
+from schemas.models import (
+    Analista, AnalistaCreate, AnalistaSimple, AnalistaBase, PasswordUpdate,
+    Campana, CampanaBase, CampanaSimple,
+    Tarea, TareaBase, TareaSimple, TareaListOutput, TareaUpdate,
+    ChecklistItem, ChecklistItemBase, ChecklistItemSimple, ChecklistItemUpdate,
+    HistorialEstadoTarea,
+    ComentarioTarea, ComentarioTareaCreate,
+    Aviso, AvisoBase, AvisoListOutput, AvisoSimple,
+    AcuseReciboAviso, AcuseReciboCreate, AcuseReciboAvisoSimple,
+
+    BitacoraEntry, BitacoraEntryBase, BitacoraEntryUpdate,
+    ComentarioGeneralBitacora, ComentarioGeneralBitacoraCreate,
+    Incidencia, IncidenciaCreate, IncidenciaSimple, IncidenciaEstadoUpdate,
+    ActualizacionIncidencia, ActualizacionIncidenciaBase,
+    DashboardStatsAnalista, DashboardStatsSupervisor,
+    TareaGeneradaPorAviso, TareaGeneradaPorAvisoUpdate, TareaGeneradaPorAvisoBase
+)
+from security import get_password_hash # El endpoint crear_analista la necesita
+
 
 # --- Creación del Router ---
 router = APIRouter(

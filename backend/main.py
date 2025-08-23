@@ -1,23 +1,24 @@
-# /backend/main.py (Versión Final y Limpia)
-
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
-from datetime import timedelta
-from typing import Optional, List
-
-# --- IMPORTS ESENCIALES PARA MAIN.PY ---
-from database import get_db
-from sql_app import models
+from typing import List, Optional
 from enums import UserRole
-from schemas.models import Token, TokenData, Analista, AnalistaCreate, AnalistaMe
-from security import verify_password, get_password_hash, create_access_token, decode_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from datetime import timedelta
 
-# --- IMPORTAMOS NUESTROS ROUTERS ---
+
+
+# --- IMPORTS CENTRALIZADOS ---
+from database import get_db, engine
+from sql_app import models
+from schemas.models import Analista, AnalistaCreate
+from schemas.auth_schemas import Token, TokenData
+from security import verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+
+# --- IMPORTAMOS NUESTROS ROUTERS Y DEPENDENCIAS ---
 from routers import gtr_router, hhee_router
+from dependencies import get_current_analista, require_role
 
 # --- CREACIÓN Y CONFIGURACIÓN DE LA APP ---
 app = FastAPI(
@@ -47,7 +48,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @app.on_event("startup")
 async def startup_event():
-    print("Evento de inicio de la aplicación ejecutado (creación de tablas desactivada).")
+    # Descomenta estas líneas UNA SOLA VEZ para crear la tabla
+    async with engine.begin() as conn:
+        await conn.run_sync(models.Base.metadata.create_all)
+    print("Base de datos y tablas verificadas/creadas.")
 
 async def get_analista_by_email(email: str, db: AsyncSession) -> Optional[models.Analista]:
     result = await db.execute(select(models.Analista).filter(models.Analista.email == email))
@@ -121,6 +125,6 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     access_token = create_access_token(data={"sub": analista.email, "role": analista.role.value}, expires_delta=access_token_expires)
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/users/me/", response_model=AnalistaMe, summary="Obtener información del Analista actual")
+@app.get("/users/me/", response_model=Analista, summary="Obtener information del Analista actual")
 async def read_users_me(current_analista: models.Analista = Depends(get_current_analista)):
     return current_analista

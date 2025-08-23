@@ -1,9 +1,10 @@
 # sql_app/models.py
 from sqlalchemy import (Column, Integer, String, Boolean, DateTime, ForeignKey, 
-                        Enum as SQLEnum, Date, Time, Text)
+                        Enum as SQLEnum, Date, Time, Text, Float, Date, DateTime)
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Table
+from sqlalchemy.sql import func
 from datetime import datetime, timezone
 
 from enums import UserRole, ProgresoTarea, TipoIncidencia, EstadoIncidencia
@@ -213,3 +214,24 @@ class ComentarioTarea(Base):
 
     tarea = relationship("Tarea", back_populates="comentarios")
     autor = relationship("Analista", back_populates="comentarios_tarea")
+    
+class ValidacionHHEE(Base):
+    __tablename__ = "validaciones_hhee"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rut = Column(String, index=True, nullable=False)
+    nombre_apellido = Column(String)
+    campaña = Column(String, nullable=True)
+    fecha_hhee = Column(Date, nullable=False, index=True)
+    tipo_hhee = Column(String, nullable=True) # "Antes de Turno", "Después de Turno", "Día de Descanso"
+    cantidad_hhee_declaradas = Column(Float, default=0.0)
+    cantidad_hhee_aprobadas = Column(Float, default=0.0)
+    estado = Column(String, default="No Guardado", index=True) # "Validado", "Pendiente por Corrección"
+    notas = Column(String, nullable=True)
+    supervisor_carga = Column(String)
+    fecha_carga = Column(DateTime(timezone=True), server_default=func.now())
+    # Campos de GV para referencia
+    turno_teorico_inicio = Column(String, nullable=True)
+    turno_teorico_fin = Column(String, nullable=True)
+    marca_real_inicio = Column(String, nullable=True)
+    marca_real_fin = Column(String, nullable=True)
