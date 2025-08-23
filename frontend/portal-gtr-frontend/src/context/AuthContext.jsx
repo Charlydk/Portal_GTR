@@ -8,6 +8,7 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [authToken, setAuthToken] = useState(localStorage.getItem('authToken'));
     const [loading, setLoading] = useState(true); // Estado de carga para la autenticación inicial
+    const [error, setError] = useState(null);
 
     // Función para obtener el perfil del usuario
     const fetchUserProfile = useCallback(async (token) => {
@@ -18,22 +19,23 @@ export const AuthProvider = ({ children }) => {
         }
         try {
             const response = await fetch(`${API_BASE_URL}/users/me/`, {
+                // --- LA LÍNEA CLAVE QUE FALTABA O ESTABA INCORRECTA ---
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },
+                // ----------------------------------------------------
             });
             if (response.ok) {
                 const userData = await response.json();
                 setUser(userData);
             } else {
-                // Si el token no es válido o hay un error, limpiar sesión
-                console.error("Error al obtener el perfil del usuario:", response.statusText);
+                console.error("Token no válido o sesión expirada. Limpiando sesión.");
                 localStorage.removeItem('authToken');
                 setAuthToken(null);
                 setUser(null);
             }
         } catch (error) {
-            console.error("Error de red o inesperado al obtener el perfil:", error);
+            console.error("Error de red al obtener el perfil del usuario:", error);
             localStorage.removeItem('authToken');
             setAuthToken(null);
             setUser(null);
@@ -61,6 +63,7 @@ export const AuthProvider = ({ children }) => {
     // Función de login
     const login = async (email, password) => {
         setLoading(true);
+        setError(null); // Limpiamos errores anteriores
         try {
             const response = await fetch(`${API_BASE_URL}/token`, {
                 method: 'POST',
@@ -79,12 +82,12 @@ export const AuthProvider = ({ children }) => {
             localStorage.setItem('authToken', data.access_token);
             setAuthToken(data.access_token);
             // El useEffect se encargará de llamar a fetchUserProfile con el nuevo token
-            return { success: true };
+
         } catch (error) {
             console.error("Error de login:", error);
-            setError(error.message); // Establecer el error para mostrarlo en el componente de login
+            setError(error.message); // AHORA ESTA LÍNEA FUNCIONARÁ
+        } finally {
             setLoading(false);
-            return { success: false, error: error.message };
         }
     };
 
@@ -96,7 +99,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, authToken, loading, login, logout, refreshUser }}>
+        <AuthContext.Provider value={{ user, authToken, loading, error, login, logout, refreshUser }}>
             {children}
         </AuthContext.Provider>
     );
