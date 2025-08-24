@@ -93,3 +93,56 @@ async def obtener_datos_completos_periodo(token: str, rut_limpio: str, fecha_ini
     except httpx.RequestError as exc:
         print(f"Error al llamar a /AttendanceBook: {exc}")
         return []
+    
+def aplicar_logica_de_negocio(datos_procesados):
+    """
+    Calcula las HHEE de inicio, fin o descanso basado en los datos de un día.
+    Esta es una traducción directa de la lógica de tu app Flask.
+    """
+    inicio_teorico_str = datos_procesados.get("inicio_turno_teorico")
+    fin_teorico_str = datos_procesados.get("fin_turno_teorico")
+    inicio_real_str = datos_procesados.get("marca_real_inicio")
+    fin_real_str = datos_procesados.get("marca_real_fin")
+
+    if not inicio_real_str or not fin_real_str:
+        return { "tipo_hhee": "Sin Marcas", "hhee_inicio_calculadas": 0, "hhee_fin_calculadas": 0, "cantidad_hhee_calculadas": 0}
+
+    inicio_real = datetime.strptime(inicio_real_str, '%H:%M')
+    fin_real = datetime.strptime(fin_real_str, '%H:%M')
+    hhee_inicio, hhee_fin = 0, 0
+    tipo_hhee = ""
+
+    es_descanso = not inicio_teorico_str or inicio_teorico_str.lower() == 'descanso' or (inicio_teorico_str == "00:00" and fin_teorico_str == "00:00")
+
+    if es_descanso:
+        tipo_hhee = "Día de Descanso"
+        # Si las marcas cruzan la medianoche, ajustamos
+        if fin_real < inicio_real:
+            fin_real += timedelta(days=1)
+        hhee_inicio = (fin_real - inicio_real).total_seconds() / 3600
+    else:
+        inicio_teorico = datetime.strptime(inicio_teorico_str, '%H:%M')
+        fin_teorico = datetime.strptime(fin_teorico_str, '%H:%M')
+
+        if fin_teorico < inicio_teorico: # Turno nocturno
+            fin_teorico += timedelta(days=1)
+
+        if fin_real < inicio_real: # Marcas nocturnas
+            fin_real += timedelta(days=1)
+
+        if inicio_real.time() < inicio_teorico.time():
+            tipo_hhee += "Antes de Turno "
+            hhee_inicio = (inicio_teorico - inicio_real).total_seconds() / 3600
+
+        if fin_real.time() > fin_teorico.time():
+            tipo_hhee += "Después de Turno"
+            hhee_fin = (fin_real - fin_teorico).total_seconds() / 3600
+
+    hhee_calculadas_total = max(0, hhee_inicio) + max(0, hhee_fin)
+
+    return {
+        "tipo_hhee": tipo_hhee.strip(),
+        "cantidad_hhee_calculadas": round(hhee_calculadas_total, 2),
+        "hhee_inicio_calculadas": round(max(0, hhee_inicio), 2) if not es_descanso else 0,
+        "hhee_fin_calculadas": round(max(0, hhee_fin), 2) if not es_descanso else 0
+    }
