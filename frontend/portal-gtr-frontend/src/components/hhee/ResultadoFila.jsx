@@ -2,53 +2,56 @@
 
 import React from 'react';
 import { Form } from 'react-bootstrap';
-import { decimalToHHMM } from '../../utils/timeUtils';
+import { decimalToHHMM } from '../../utils/timeUtils'; // Importamos desde el archivo de utilidades
 
-
-// El componente recibe todas las props que necesita para renderizar una fila
 function ResultadoFila({ dia, validacionDia, onValidationChange, onSimpleChange, onRevalidar }) {
 
-    const esDescanso = (dia.inicio_turno_teorico === '00:00' && dia.fin_turno_teorico === '00:00') || dia.tipo_hhee === 'Día de Descanso';
-    const isDisabled = validacionDia.pendiente;
+    // Si no hay datos de validación para este día, no renderizamos nada para evitar errores
+    if (!validacionDia) return null;
 
-    // --- Lógica para la celda de HHEE a Aprobar ---
+    const esDescanso = (dia.inicio_turno_teorico === '00:00' && dia.fin_turno_teorico === '00:00');
+    const isDisabledGeneral = validacionDia.pendiente || dia.estado_final === 'Validado' || dia.estado_final === 'Pendiente por Corrección';
+
     const renderInputsHHEE = () => {
-        if (dia.estado_final === 'Validado') {
-            // Si ya está validado, mostramos texto simple
-            const hheeAprobadas = dia.cantidad_hhee_aprobadas || (dia.hhee_aprobadas_inicio + dia.hhee_aprobadas_fin + dia.hhee_aprobadas_descanso);
-            return <div className="texto-aprobado">Aprobado: {decimalToHHMM(hheeAprobadas)}</div>;
-        }
-        if (dia.estado_final === 'Pendiente por Corrección') {
-            return <div style={{ color: 'orange' }}>Pendiente</div>;
+        if (dia.estado_final !== 'No Guardado') {
+             return <span className="text-muted fst-italic">No editable</span>;
         }
 
         if (esDescanso) {
+            if (!dia.cantidad_hhee_calculadas || dia.cantidad_hhee_calculadas <= 0) return '---';
             return (
                 <div className="d-flex align-items-center">
-                    <Form.Check type="checkbox" className="me-2" checked={validacionDia.descanso?.habilitado} disabled={isDisabled} onChange={e => onValidationChange(dia.fecha, 'descanso', 'habilitado', e.target.checked)} />
-                    <Form.Label className="me-2 mb-0 fw-bold">Descanso:</Form.Label>
-                    <Form.Control type="time" style={{ width: '100px' }} value={validacionDia.descanso?.valor} disabled={isDisabled || !validacionDia.descanso?.habilitado} onChange={e => onValidationChange(dia.fecha, 'descanso', 'valor', e.target.value)} />
+                    <Form.Check type="checkbox" className="me-2" checked={validacionDia.descanso.habilitado} disabled={isDisabledGeneral} onChange={e => onValidationChange(dia.fecha, 'descanso', 'habilitado', e.target.checked)} />
+                    <Form.Label className="me-2 mb-0 fw-bold" style={{whiteSpace: 'nowrap'}}>Descanso:</Form.Label>
+                    <Form.Control type="time" style={{ width: '100px' }} value={validacionDia.descanso.valor} disabled={isDisabledGeneral || !validacionDia.descanso.habilitado} onChange={e => onValidationChange(dia.fecha, 'descanso', 'valor', e.target.value)} />
                 </div>
             );
         }
 
+        if (dia.hhee_inicio_calculadas <= 0 && dia.hhee_fin_calculadas <= 0) {
+            return '---';
+        }
+
         return (
             <>
-                <div className="d-flex align-items-center mb-1">
-                    <Form.Check type="checkbox" className="me-2" checked={validacionDia.antes?.habilitado} disabled={isDisabled} onChange={e => onValidationChange(dia.fecha, 'antes', 'habilitado', e.target.checked)} />
-                    <Form.Label className="me-2 mb-0 fw-bold">Antes:</Form.Label>
-                    <Form.Control type="time" style={{ width: '100px' }} value={validacionDia.antes?.valor} disabled={isDisabled || !validacionDia.antes?.habilitado} onChange={e => onValidationChange(dia.fecha, 'antes', 'valor', e.target.value)} />
-                </div>
-                <div className="d-flex align-items-center">
-                    <Form.Check type="checkbox" className="me-2" checked={validacionDia.despues?.habilitado} disabled={isDisabled} onChange={e => onValidationChange(dia.fecha, 'despues', 'habilitado', e.target.checked)} />
-                    <Form.Label className="me-2 mb-0 fw-bold">Después:</Form.Label>
-                    <Form.Control type="time" style={{ width: '100px' }} value={validacionDia.despues?.valor} disabled={isDisabled || !validacionDia.despues?.habilitado} onChange={e => onValidationChange(dia.fecha, 'despues', 'valor', e.target.value)} />
-                </div>
+                {dia.hhee_inicio_calculadas > 0 && (
+                    <div className="d-flex align-items-center mb-1">
+                        <Form.Check type="checkbox" className="me-2" checked={validacionDia.antes.habilitado} disabled={isDisabledGeneral} onChange={e => onValidationChange(dia.fecha, 'antes', 'habilitado', e.target.checked)} />
+                        <Form.Label className="me-2 mb-0 fw-bold" style={{whiteSpace: 'nowrap'}}>Antes:</Form.Label>
+                        <Form.Control type="time" style={{ width: '100px' }} value={validacionDia.antes.valor} disabled={isDisabledGeneral || !validacionDia.antes.habilitado} onChange={e => onValidationChange(dia.fecha, 'antes', 'valor', e.target.value)} />
+                    </div>
+                )}
+                {dia.hhee_fin_calculadas > 0 && (
+                    <div className="d-flex align-items-center">
+                        <Form.Check type="checkbox" className="me-2" checked={validacionDia.despues.habilitado} disabled={isDisabledGeneral} onChange={e => onValidationChange(dia.fecha, 'despues', 'habilitado', e.target.checked)} />
+                        <Form.Label className="me-2 mb-0 fw-bold" style={{whiteSpace: 'nowrap'}}>Después:</Form.Label>
+                        <Form.Control type="time" style={{ width: '100px' }} value={validacionDia.despues.valor} disabled={isDisabledGeneral || !validacionDia.despues.habilitado} onChange={e => onValidationChange(dia.fecha, 'despues', 'valor', e.target.value)} />
+                    </div>
+                )}
             </>
         );
     };
 
-    // --- Lógica para la celda "Marcar como Pendiente" ---
     const renderCeldaPendiente = () => {
          if (dia.estado_final === 'Pendiente por Corrección') {
             return (
@@ -79,7 +82,21 @@ function ResultadoFila({ dia, validacionDia, onValidationChange, onSimpleChange,
                 </>
             );
         }
-        return '---'; // Si ya está validado o no aplica
+        return '---';
+    };
+
+    const renderHHEERRHH = () => {
+        if (esDescanso) {
+            const totalDescansoRRHH = (dia.hhee_autorizadas_antes_gv || 0) + (dia.hhee_autorizadas_despues_gv || 0);
+            return totalDescansoRRHH > 0 ? `Descanso: ${decimalToHHMM(totalDescansoRRHH)}` : "";
+        }
+
+        const antes = dia.hhee_autorizadas_antes_gv > 0 ? `Antes: ${decimalToHHMM(dia.hhee_autorizadas_antes_gv)}` : null;
+        const despues = dia.hhee_autorizadas_despues_gv > 0 ? `Después: ${decimalToHHMM(dia.hhee_autorizadas_despues_gv)}` : null;
+
+        if (!antes && !despues) return "";
+
+        return (<>{antes && <div>{antes}</div>}{despues && <div>{despues}</div>}</>);
     };
 
     return (
@@ -89,17 +106,10 @@ function ResultadoFila({ dia, validacionDia, onValidationChange, onSimpleChange,
                 <div>Turno: {esDescanso ? 'Descanso' : `${dia.inicio_turno_teorico || 'N/A'} - ${dia.fin_turno_teorico || 'N/A'}`}</div>
                 <div>Marcas: {`${dia.marca_real_inicio || 'N/A'} - ${dia.marca_real_fin || 'N/A'}`}</div>
             </td>
-            <td>
-                <div>Antes: {decimalToHHMM(dia.hhee_inicio_calculadas)}</div>
-                <div>Después: {decimalToHHMM(dia.hhee_fin_calculadas)}</div>
-                <div>Descanso: {decimalToHHMM(dia.cantidad_hhee_calculadas)}</div>
-            </td>
             <td>{renderInputsHHEE()}</td>
-            <td>
-                <div>Antes: {decimalToHHMM(dia.hhee_autorizadas_antes_gv)}</div>
-                <div>Después: {decimalToHHMM(dia.hhee_autorizadas_despues_gv)}</div>
-            </td>
+            <td>{renderHHEERRHH()}</td>
             <td>{renderCeldaPendiente()}</td>
+            <td><span className={`badge bg-${dia.estado_final === 'Validado' ? 'success' : dia.estado_final === 'Pendiente por Corrección' ? 'warning' : 'secondary'}`}>{dia.estado_final}</span></td>
         </tr>
     );
 }

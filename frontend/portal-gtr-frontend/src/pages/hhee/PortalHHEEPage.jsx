@@ -68,16 +68,30 @@ function PortalHHEEPage() {
             setResultados(data.datos_periodo);
 
             const initialValidaciones = {};
-            data.datos_periodo.forEach(dia => {
-                initialValidaciones[dia.fecha] = {
-                    antes: { habilitado: false, valor: decimalToHHMM(dia.hhee_inicio_calculadas) },
-                    despues: { habilitado: false, valor: decimalToHHMM(dia.hhee_fin_calculadas) },
-                    descanso: { habilitado: false, valor: decimalToHHMM(dia.cantidad_hhee_calculadas) },
-                    pendiente: dia.estado_final === 'Pendiente por Corrección',
-                    nota: dia.notas || ''
-                };
-            });
-            setValidaciones(initialValidaciones);
+data.datos_periodo.forEach(dia => {
+    const esDescanso = (dia.inicio_turno_teorico === '00:00' && dia.fin_turno_teorico === '00:00');
+
+    initialValidaciones[dia.fecha] = {
+        // Usamos los valores calculados de GV para inicializar los inputs
+        antes: {
+            habilitado: false,
+            valor: decimalToHHMM(dia.hhee_inicio_calculadas)
+        },
+        despues: {
+            habilitado: false,
+            valor: decimalToHHMM(dia.hhee_fin_calculadas)
+        },
+
+        descanso: {
+            habilitado: false,
+            valor: decimalToHHMM(esDescanso ? dia.cantidad_hhee_calculadas : 0)
+        },
+        // El resto de la inicialización se queda igual
+        pendiente: dia.estado_final === 'Pendiente por Corrección',
+        nota: dia.notas || ''
+    };
+});
+setValidaciones(initialValidaciones);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -256,33 +270,33 @@ function PortalHHEEPage() {
                         </Button>
                     </Card.Header>
                     <Card.Body>
-                        <Table striped bordered hover responsive>
-                            <thead>
-                                <tr>
-                                    <th>Fecha</th>
-                                    <th>Turno / Marcas</th>
-                                    <th>HHEE Calculadas (GV)</th>
-                                    <th>HHEE a Aprobar</th>
-                                    <th>HHEE Aprobadas (RRHH)</th>
-                                    <th>Marcar como Pendiente</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {resultados.map((dia) => (
-                                    <ResultadoFila
-                                        key={dia.fecha}
-                                        dia={dia}
-                                        validacionDia={validaciones[dia.fecha]}
-                                        onValidationChange={handleValidationChange}
-                                        onSimpleChange={handleSimpleChange}
-                                        onRevalidar={async (rut, fecha) => {
-                                            // Lógica de revalidación aquí
-                                            console.log(`Revalidando ${rut} en fecha ${fecha}`);
-                                        }}
-                                    />
-                                ))}
-                            </tbody>
-                        </Table>
+                    <Table striped bordered hover responsive>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Turno / Marcas</th>
+                            <th>HHEE a Aprobar</th>
+                            <th>HHEE Aprobadas (RRHH)</th>
+                            <th>Marcar como Pendiente</th>
+                            <th>Estado Actual</th>
+                        </tr>
+                    </thead>
+                        <tbody>
+                            {resultados.map((dia) => (
+                                <ResultadoFila
+                                    key={dia.fecha}
+                                    dia={dia}
+                                    validacionDia={validaciones[dia.fecha]}
+                                    onValidationChange={handleValidationChange}
+                                    onSimpleChange={handleSimpleChange}
+                                    onRevalidar={(rut, fecha) => {
+                                        // Aquí pondremos la lógica para revalidar, por ahora un log
+                                        console.log(`Revalidando ${rut} en fecha ${fecha}`);
+                                    }}
+                                />
+                            ))}
+                        </tbody>
+                    </Table>
                     </Card.Body>
                 </Card>
             )}

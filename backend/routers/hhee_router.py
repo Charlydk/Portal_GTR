@@ -53,7 +53,7 @@ async def consultar_empleado(
     consulta: ConsultaHHEE,
     db: AsyncSession = Depends(get_db),
     current_user: models.Analista = Depends(get_current_analista)
-    ):
+):
     token = await geovictoria_service.obtener_token_geovictoria()
     if not token:
         raise HTTPException(status_code=503, detail="No se pudo comunicar con el servicio externo (GeoVictoria).")
@@ -69,9 +69,7 @@ async def consultar_empleado(
     if not datos_gv:
         raise HTTPException(status_code=404, detail="No se encontraron datos en GeoVictoria para el RUT y período seleccionados.")
 
-    # --- LÓGICA DE CRUCE CON BASE DE DATOS (NUEVO) ---
-
-    # 1. Obtener las validaciones ya guardadas para este RUT y período
+    # --- LÓGICA DE CRUCE CON BASE DE DATOS Y CÁLCULO (ACTUALIZADO) ---
     query_guardados = select(models.ValidacionHHEE).filter(
         models.ValidacionHHEE.rut == consulta.rut,
         models.ValidacionHHEE.fecha_hhee.between(consulta.fecha_inicio, consulta.fecha_fin)
@@ -79,7 +77,6 @@ async def consultar_empleado(
     result_guardados = await db.execute(query_guardados)
     validaciones_guardadas = result_guardados.scalars().all()
 
-    # 2. Agruparlas por fecha para un acceso rápido
     datos_guardados_por_fecha = {}
     for v in validaciones_guardadas:
         fecha_str = v.fecha_hhee.strftime('%Y-%m-%d')
@@ -88,25 +85,26 @@ async def consultar_empleado(
         tipo = v.tipo_hhee or 'General'
         datos_guardados_por_fecha[fecha_str][tipo] = v
 
-    # 3. Fusionar datos de GV con los datos guardados
     resultados_finales = []
     for datos_dia_gv in datos_gv:
-        fecha = datos_dia_gv['fecha']
+        # ¡AQUÍ APLICAMOS LA LÓGICA DE NEGOCIO!
+        logica_negocio = geovictoria_service.aplicar_logica_de_negocio(datos_dia_gv)
+        datos_dia_completo = {**datos_dia_gv, **logica_negocio}
+
+        fecha = datos_dia_completo['fecha']
         registros_del_dia = datos_guardados_por_fecha.get(fecha, {})
 
         estado_general = 'No Guardado'
         if registros_del_dia:
-            # Si cualquier registro del día está pendiente, el estado general es pendiente
             if any(r.estado == 'Pendiente por Corrección' for r in registros_del_dia.values()):
                 estado_general = 'Pendiente por Corrección'
-            # Si no hay pendientes pero al menos uno está validado, el estado es validado
             elif any(r.estado == 'Validado' for r in registros_del_dia.values()):
                 estado_general = 'Validado'
 
-        datos_dia_gv['estado_final'] = estado_general
-        resultados_finales.append(datos_dia_gv)
+        datos_dia_completo['estado_final'] = estado_general
+        resultados_finales.append(datos_dia_completo)
 
-    # --- FIN DE LA LÓGICA DE CRUCE ---
+    # --- FIN DE LA LÓGICA ---
 
     nombre_agente = resultados_finales[0].get('nombre_apellido', 'No encontrado')
 
