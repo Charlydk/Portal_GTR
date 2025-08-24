@@ -171,3 +171,28 @@ async def cargar_horas_extras(
 
     mensaje_final = " | ".join(mensajes_respuesta) if mensajes_respuesta else "No se enviaron validaciones."
     return {"mensaje": f"Proceso finalizado. Resumen: {mensaje_final}"}
+
+
+
+@router.get("/pendientes", summary="Consulta todos los registros pendientes de HHEE")
+async def consultar_pendientes(
+    db: AsyncSession = Depends(get_db),
+    current_user: models.Analista = Depends(get_current_analista)
+):
+    """
+    Devuelve una lista de todas las validaciones que están marcadas
+    como 'Pendiente por Corrección' para el supervisor actual.
+    """
+    query = select(models.ValidacionHHEE).filter(
+        models.ValidacionHHEE.estado == 'Pendiente por Corrección',
+        models.ValidacionHHEE.supervisor_carga == current_user.email
+    ).order_by(models.ValidacionHHEE.fecha_hhee.desc())
+
+    result = await db.execute(query)
+    pendientes = result.scalars().all()
+
+    # Simulamos la estructura de respuesta de la consulta principal para reutilizar la tabla
+    return {
+        "datos_periodo": pendientes,
+        "nombre_agente": "Múltiples Agentes con Pendientes"
+    }
