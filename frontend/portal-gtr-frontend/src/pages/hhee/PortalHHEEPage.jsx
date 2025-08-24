@@ -100,16 +100,29 @@ setValidaciones(initialValidaciones);
     };
 
     const handleValidationChange = (fecha, tipo, campo, valor) => {
-        setValidaciones(prev => ({
-            ...prev,
-            [fecha]: {
-                ...prev[fecha],
-                [tipo]: {
-                    ...prev[fecha][tipo],
-                    [campo]: valor
+        setValidaciones(prev => {
+            // Hacemos una copia profunda para no mutar el estado directamente
+            const newState = JSON.parse(JSON.stringify(prev)); 
+    
+            // Actualizamos el campo específico (ej: 'habilitado' a true/false o 'valor' a '00:10')
+            newState[fecha][tipo][campo] = valor;
+    
+            // LÓGICA DE RESETEO: Si estamos desmarcando el checkbox...
+            if (campo === 'habilitado' && !valor) {
+                // ...buscamos los datos originales de ese día para obtener el valor calculado por GV
+                const diaData = resultados.find(d => d.fecha === fecha);
+                if (diaData) {
+                    let valorOriginal = "00:00";
+                    if (tipo === 'antes') valorOriginal = decimalToHHMM(diaData.hhee_inicio_calculadas);
+                    if (tipo === 'despues') valorOriginal = decimalToHHMM(diaData.hhee_fin_calculadas);
+                    if (tipo === 'descanso') valorOriginal = decimalToHHMM(diaData.cantidad_hhee_calculadas);
+    
+                    // Reseteamos el input a su valor original
+                    newState[fecha][tipo]['valor'] = valorOriginal;
                 }
             }
-        }));
+            return newState;
+        });
     };
 
     // Función simple para manejar pendiente y nota que no están anidados
@@ -125,23 +138,40 @@ setValidaciones(initialValidaciones);
         setLoading(true);
         setError(null);
         setSuccess(null);
-
+    
         const validacionesParaEnviar = resultados
             .map(dia => {
                 const validacion = validaciones[dia.fecha];
-                if (!validacion || (!validacion.antes?.habilitado && !validacion.despues?.habilitado && !validacion.descanso?.habilitado && !validacion.pendiente)) return null;
+                if (!validacion) return null;
+    
+                // CORRECCIÓN: Ahora también incluimos las filas que han sido re-validadas
+                const debeEnviar = validacion.antes?.habilitado || 
+                                 validacion.despues?.habilitado || 
+                                 validacion.descanso?.habilitado || 
+                                 validacion.pendiente ||
+                                 validacion.revalidado; // <-- AÑADIMOS LA CONDICIÓN
+    
+                if (!debeEnviar) return null;
+    
                 return {
-                    rut_con_formato: rut, fecha: dia.fecha, nombre_apellido: nombreAgente,
-                    campaña: dia.campaña, turno_es_incorrecto: validacion.pendiente, nota: validacion.nota,
+                    rut_con_formato: rut,
+                    fecha: dia.fecha,
+                    nombre_apellido: nombreAgente,
+                    campaña: dia.campaña,
+                    turno_es_incorrecto: validacion.pendiente,
+                    nota: validacion.nota,
                     hhee_aprobadas_inicio: validacion.antes.habilitado ? hhmmToDecimal(validacion.antes.valor) : 0,
                     hhee_aprobadas_fin: validacion.despues.habilitado ? hhmmToDecimal(validacion.despues.valor) : 0,
                     hhee_aprobadas_descanso: validacion.descanso.habilitado ? hhmmToDecimal(validacion.descanso.valor) : 0,
                 };
-            }).filter(Boolean);
-
+            })
+            .filter(Boolean); // Filtra los nulos
+    
+        // Ahora esta comprobación funcionará correctamente para el caso de "cancelar pendiente"
         if (validacionesParaEnviar.length === 0) {
-            setError("No has habilitado ninguna fila para guardar.");
-            setLoading(false); return;
+            setError("No has habilitado ninguna fila para guardar o re-validar.");
+            setLoading(false);
+            return;
         }
         try {
             const response = await fetch(`${API_BASE_URL}/hhee/cargar-hhee`, {
@@ -160,6 +190,40 @@ setValidaciones(initialValidaciones);
         }
     };
 
+    
+    const handleRevalidar = (rut, fecha) => {
+        const diaParaRevalidar = resultados.find(d => d.fecha === fecha);
+        if (!diaParaRevalidar) return;
+    
+        // Cambiamos el estado visual de la tabla
+        setResultados(prevResultados => 
+            prevResultados.map(dia => 
+                dia.fecha === fecha ? { ...dia, estado_final: 'No Guardado', notas: '' } : dia
+            )
+        );
+    
+        // Reseteamos el estado de los inputs para esa fila y añadimos la bandera
+        setValidaciones(prevValidaciones => ({
+            ...prevValidaciones,
+            [fecha]: {
+                antes: {
+                    habilitado: false,
+                    valor: decimalToHHMM(diaParaRevalidar.hhee_inicio_calculadas)
+                },
+                despues: {
+                    habilitado: false,
+                    valor: decimalToHHMM(diaParaRevalidar.hhee_fin_calculadas)
+                },
+                descanso: {
+                    habilitado: false,
+                    valor: decimalToHHMM(diaParaRevalidar.cantidad_hhee_calculadas)
+                },
+                pendiente: false,
+                nota: '',
+                revalidado: true
+            }
+        }));
+    };
 
     const handleCargarPendientes = async () => {
         setLoading(true);
@@ -278,24 +342,20 @@ setValidaciones(initialValidaciones);
                             <th>HHEE a Aprobar</th>
                             <th>HHEE Aprobadas (RRHH)</th>
                             <th>Marcar como Pendiente</th>
-                            <th>Estado Actual</th>
                         </tr>
                     </thead>
-                        <tbody>
-                            {resultados.map((dia) => (
-                                <ResultadoFila
-                                    key={dia.fecha}
-                                    dia={dia}
-                                    validacionDia={validaciones[dia.fecha]}
-                                    onValidationChange={handleValidationChange}
-                                    onSimpleChange={handleSimpleChange}
-                                    onRevalidar={(rut, fecha) => {
-                                        // Aquí pondremos la lógica para revalidar, por ahora un log
-                                        console.log(`Revalidando ${rut} en fecha ${fecha}`);
-                                    }}
-                                />
-                            ))}
-                        </tbody>
+                    <tbody>
+                        {resultados.map((dia) => (
+                            <ResultadoFila
+                                key={dia.fecha}
+                                dia={dia}
+                                validacionDia={validaciones[dia.fecha]}
+                                onValidationChange={handleValidationChange}
+                                onSimpleChange={handleSimpleChange}
+                                onRevalidar={handleRevalidar} // <-- PASAMOS LA FUNCIÓN AQUÍ
+                            />
+                        ))}
+                    </tbody>
                     </Table>
                     </Card.Body>
                 </Card>
