@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Container, Card, ListGroup, Button, Spinner, Alert, Badge } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 function TareasDisponiblesPage() {
     const navigate = useNavigate();

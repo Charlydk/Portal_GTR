@@ -2,8 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // ¡NUEVO! Importa useAuth
-
+import { useAuth } from '../hooks/useAuth';
 function AnalistasPage() {
   const [analistas, setAnalistas] = useState([]);
   const [loading, setLoading] = useState(true);

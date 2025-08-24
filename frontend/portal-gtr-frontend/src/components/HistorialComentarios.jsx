@@ -1,8 +1,7 @@
 // src/components/HistorialComentarios.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
-import { Card, Form, Button, Alert, Spinner, ListGroup, Badge } from 'react-bootstrap';
+import { useAuth } from '../hooks/useAuth';import { Card, Form, Button, Alert, Spinner, ListGroup, Badge } from 'react-bootstrap';
 
 const HistorialComentarios = ({ campanaId }) => {
   const { authToken } = useAuth();

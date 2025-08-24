@@ -1,8 +1,7 @@
 // src/components/RegistroIncidenciaForm.jsx
 import React, { useState } from 'react';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
-import { Form, Button, Alert, Spinner, Card } from 'react-bootstrap';
+import { useAuth } from '../hooks/useAuth';import { Form, Button, Alert, Spinner, Card } from 'react-bootstrap';
 
 const RegistroIncidenciaForm = ({ campanaId, onSuccess, onError }) => {
   const { user, authToken } = useAuth();

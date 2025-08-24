@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 import { Form, Button, Container, Card, Spinner, Alert, Row, Col } from 'react-bootstrap';
 
 function FormularioIncidenciaPage() {

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Row, Col, Card, ListGroup, Button, Alert, Spinner } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // Importamos useAuth para obtener el token y el rol
+import { useAuth } from '../hooks/useAuth'; // Importamos useAuth para obtener el token y el rol
 
 function AsignacionCampanasPage() {
   const [analistas, setAnalistas] = useState([]);

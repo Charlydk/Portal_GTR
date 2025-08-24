@@ -2,8 +2,11 @@
 
 import React, { useState } from 'react';
 import { Container, Form, Button, Card, Spinner, Alert, Table, Row, Col } from 'react-bootstrap';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
 import { API_BASE_URL } from '../../api';
+import ResultadoFila from '../../components/hhee/ResultadoFila';
+import { decimalToHHMM, hhmmToDecimal } from '../../utils/timeUtils';
+
 
 function PortalHHEEPage() {
     const [rut, setRut] = useState('');
@@ -27,25 +30,20 @@ function PortalHHEEPage() {
     const handlePeriodoChange = (seleccion) => {
         let fechaInicio, fechaFin;
         const hoy = new Date();
-    
         switch (seleccion) {
             case 'actual':
                 fechaFin = new Date(hoy.getFullYear(), hoy.getMonth(), 25);
                 fechaInicio = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 26);
-                setFechaInicio(formatDate(fechaInicio));
-                setFechaFin(formatDate(fechaFin));
                 break;
             case 'anterior':
                 fechaFin = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 25);
                 fechaInicio = new Date(hoy.getFullYear(), hoy.getMonth() - 2, 26);
-                setFechaInicio(formatDate(fechaInicio));
-                setFechaFin(formatDate(fechaFin));
                 break;
             default:
-                setFechaInicio('');
-                setFechaFin('');
-                break;
+                setFechaInicio(''); setFechaFin(''); return;
         }
+        setFechaInicio(formatDate(fechaInicio));
+        setFechaFin(formatDate(fechaFin));
     };
 
     const handleConsulta = async (e) => {
@@ -72,14 +70,14 @@ function PortalHHEEPage() {
             const initialValidaciones = {};
             data.datos_periodo.forEach(dia => {
                 initialValidaciones[dia.fecha] = {
-                    habilitado: false,
-                    hhee_aprobadas: dia.hhee_autorizadas_despues_gv || 0,
+                    antes: { habilitado: false, valor: decimalToHHMM(dia.hhee_inicio_calculadas) },
+                    despues: { habilitado: false, valor: decimalToHHMM(dia.hhee_fin_calculadas) },
+                    descanso: { habilitado: false, valor: decimalToHHMM(dia.cantidad_hhee_calculadas) },
                     pendiente: dia.estado_final === 'Pendiente por Corrección',
                     nota: dia.notas || ''
                 };
             });
             setValidaciones(initialValidaciones);
-
         } catch (err) {
             setError(err.message);
         } finally {
@@ -87,44 +85,50 @@ function PortalHHEEPage() {
         }
     };
 
-    const handleValidationChange = (fecha, campo, valor) => {
+    const handleValidationChange = (fecha, tipo, campo, valor) => {
         setValidaciones(prev => ({
             ...prev,
             [fecha]: {
                 ...prev[fecha],
-                [campo]: valor
+                [tipo]: {
+                    ...prev[fecha][tipo],
+                    [campo]: valor
+                }
             }
         }));
     };
 
+    // Función simple para manejar pendiente y nota que no están anidados
+    const handleSimpleChange = (fecha, campo, valor) => {
+        setValidaciones(prev => ({
+            ...prev,
+            [fecha]: { ...prev[fecha], [campo]: valor }
+        }));
+    };
+
+    // --- CAMBIO: LÓGICA DE GUARDADO ADAPTADA A LA NUEVA ESTRUCTURA ---
     const handleGuardar = async () => {
         setLoading(true);
         setError(null);
         setSuccess(null);
 
         const validacionesParaEnviar = resultados
-            .filter(dia => validaciones[dia.fecha]?.habilitado)
             .map(dia => {
                 const validacion = validaciones[dia.fecha];
+                if (!validacion || (!validacion.antes?.habilitado && !validacion.despues?.habilitado && !validacion.descanso?.habilitado && !validacion.pendiente)) return null;
                 return {
-                    rut_con_formato: rut,
-                    fecha: dia.fecha,
-                    nombre_apellido: nombreAgente,
-                    campaña: dia.campaña,
-                    turno_es_incorrecto: validacion.pendiente,
-                    nota: validacion.nota,
-                    hhee_aprobadas_inicio: 0,
-                    hhee_aprobadas_fin: validacion.hhee_aprobadas,
-                    hhee_aprobadas_descanso: 0,
+                    rut_con_formato: rut, fecha: dia.fecha, nombre_apellido: nombreAgente,
+                    campaña: dia.campaña, turno_es_incorrecto: validacion.pendiente, nota: validacion.nota,
+                    hhee_aprobadas_inicio: validacion.antes.habilitado ? hhmmToDecimal(validacion.antes.valor) : 0,
+                    hhee_aprobadas_fin: validacion.despues.habilitado ? hhmmToDecimal(validacion.despues.valor) : 0,
+                    hhee_aprobadas_descanso: validacion.descanso.habilitado ? hhmmToDecimal(validacion.descanso.valor) : 0,
                 };
-            });
+            }).filter(Boolean);
 
         if (validacionesParaEnviar.length === 0) {
-            setError("No has habilitado ninguna fila para guardar. Marca la casilla 'Habilitar' en las filas que quieras guardar.");
-            setLoading(false);
-            return;
+            setError("No has habilitado ninguna fila para guardar.");
+            setLoading(false); return;
         }
-
         try {
             const response = await fetch(`${API_BASE_URL}/hhee/cargar-hhee`, {
                 method: 'POST',
@@ -133,17 +137,15 @@ function PortalHHEEPage() {
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.detail);
-
             setSuccess(data.mensaje);
-            const fakeEvent = { preventDefault: () => {} };
-            handleConsulta(fakeEvent);
-
+            handleConsulta({ preventDefault: () => {} });
         } catch (err) {
             setError(err.message);
         } finally {
             setLoading(false);
         }
     };
+
 
     const handleCargarPendientes = async () => {
         setLoading(true);
@@ -177,7 +179,6 @@ function PortalHHEEPage() {
         <Container className="py-4">
             <h1 className="mb-4">Portal de Carga de Horas Extras (HHEE)</h1>
             
-            {/* --- ESTE ES EL BLOQUE CORREGIDO --- */}
             <Card className="shadow-sm mb-4">
                 <Card.Body>
                     <Card.Title>Consultar Período de Empleado</Card.Title>
@@ -241,94 +242,45 @@ function PortalHHEEPage() {
                     </Form>
                 </Card.Body>
             </Card>
-            {/* --- FIN DEL BLOQUE CORREGIDO --- */}
-
+            
             {loading && <div className="text-center"><Spinner animation="border" /> <p>Cargando...</p></div>}
             {error && <Alert variant="danger" onClose={() => setError(null)} dismissible>{error}</Alert>}
             {success && <Alert variant="success" onClose={() => setSuccess(null)} dismissible>{success}</Alert>}
-
+    
             {resultados.length > 0 && (
                 <Card className="shadow-sm">
                     <Card.Header className="d-flex justify-content-between align-items-center">
                         <h4>Resultados para: {nombreAgente}</h4>
                         <Button variant="success" onClick={handleGuardar} disabled={loading}>
-                            Guardar Validaciones Habilitadas
+                            Guardar Validaciones
                         </Button>
                     </Card.Header>
                     <Card.Body>
                         <Table striped bordered hover responsive>
                             <thead>
                                 <tr>
-                                    <th>Habilitar</th>
                                     <th>Fecha</th>
                                     <th>Turno / Marcas</th>
-                                    <th>HHEE (RRHH)</th>
+                                    <th>HHEE Calculadas (GV)</th>
                                     <th>HHEE a Aprobar</th>
-                                    <th>Marcar Pendiente</th>
-                                    <th>Estado Actual</th>
+                                    <th>HHEE Aprobadas (RRHH)</th>
+                                    <th>Marcar como Pendiente</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {resultados.map((dia) => {
-                                    const esDescanso = (dia.inicio_turno_teorico === '00:00' && dia.fin_turno_teorico === '00:00') || dia.tipo_hhee === 'Día de Descanso';
-                                    const validacionDia = validaciones[dia.fecha] || {};
-
-                                    return (
-                                        <tr key={dia.fecha} style={{backgroundColor: validacionDia.pendiente ? '#fff9e6' : ''}}>
-                                            <td>
-                                                <Form.Check 
-                                                    type="checkbox"
-                                                    checked={validacionDia.habilitado || false}
-                                                    onChange={(e) => handleValidationChange(dia.fecha, 'habilitado', e.target.checked)}
-                                                />
-                                            </td>
-                                            <td>{dia.fecha}</td>
-                                            {/* CAMBIO: Mostramos el turno teórico junto a las marcas */}
-                                            <td>
-                                                <div>Turno: {esDescanso ? 'Descanso' : `${dia.inicio_turno_teorico || 'N/A'} - ${dia.fin_turno_teorico || 'N/A'}`}</div>
-                                                <div>Marcas: {dia.marca_real_inicio || 'N/A'} - {dia.marca_real_fin || 'N/A'}</div>
-                                            </td>
-                                            <td>{(dia.hhee_autorizadas_despues_gv || 0).toFixed(2)} hrs</td>
-                                            <td>
-                                                <Form.Control 
-                                                    type="number"
-                                                    step="0.01"
-                                                    value={validacionDia.hhee_aprobadas || 0}
-                                                    onChange={(e) => handleValidationChange(dia.fecha, 'hhee_aprobadas', parseFloat(e.target.value))}
-                                                    disabled={!validacionDia.habilitado || validacionDia.pendiente}
-                                                    style={{ width: '80px' }}
-                                                />
-                                            </td>
-                                            <td>
-                                                <Form.Check 
-                                                    type="checkbox"
-                                                    label="Sí"
-                                                    checked={validacionDia.pendiente || false}
-                                                    onChange={(e) => handleValidationChange(dia.fecha, 'pendiente', e.target.checked)}
-                                                    disabled={!validacionDia.habilitado}
-                                                />
-                                                {/* CAMBIO: Añadimos el selector de notas */}
-                                                {validacionDia.pendiente && (
-                                                    <Form.Select 
-                                                        size="sm" 
-                                                        className="mt-1" 
-                                                        value={validacionDia.nota || ''}
-                                                        onChange={(e) => handleValidationChange(dia.fecha, 'nota', e.target.value)}
-                                                    >
-                                                        <option value="">Seleccione motivo...</option>
-                                                        <option value="Pendiente de cambio de turno">Cambio de turno</option>
-                                                        <option value="Pendiente de corrección de marcas">Corrección de marcas</option>
-                                                    </Form.Select>
-                                                )}
-                                            </td>
-                                            <td>
-                                                <span className={`badge bg-${dia.estado_final === 'Validado' ? 'success' : dia.estado_final === 'Pendiente por Corrección' ? 'warning' : 'secondary'}`}>
-                                                    {dia.estado_final}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    )
-                                })}
+                                {resultados.map((dia) => (
+                                    <ResultadoFila
+                                        key={dia.fecha}
+                                        dia={dia}
+                                        validacionDia={validaciones[dia.fecha]}
+                                        onValidationChange={handleValidationChange}
+                                        onSimpleChange={handleSimpleChange}
+                                        onRevalidar={async (rut, fecha) => {
+                                            // Lógica de revalidación aquí
+                                            console.log(`Revalidando ${rut} en fecha ${fecha}`);
+                                        }}
+                                    />
+                                ))}
                             </tbody>
                         </Table>
                     </Card.Body>

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 import { Container, Card, ListGroup, Button, Spinner, Alert, Row, Col, Tab, Nav, Badge } from 'react-bootstrap';
 import BitacoraCampana from '../components/BitacoraCampana';
 import ListaIncidencias from '../components/ListaIncidencias';

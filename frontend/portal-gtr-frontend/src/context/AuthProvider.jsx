@@ -1,13 +1,12 @@
-// src/context/AuthContext.jsx
-import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
-import { API_BASE_URL } from '../api'; // Asegúrate de que API_BASE_URL esté definido
-
-const AuthContext = createContext(null);
+/// src/context/AuthProvider.jsx
+import React, { useState, useEffect, useCallback } from 'react';
+import { API_BASE_URL } from '../api';
+import { AuthContext } from './AuthContext'; // <-- Importamos el contexto desde su nuevo archivo
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [authToken, setAuthToken] = useState(localStorage.getItem('authToken'));
-    const [loading, setLoading] = useState(true); // Estado de carga para la autenticación inicial
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
     // Función para obtener el perfil del usuario
@@ -105,4 +104,3 @@ export const AuthProvider = ({ children }) => {
     );
 };
 
-export const useAuth = () => useContext(AuthContext);
