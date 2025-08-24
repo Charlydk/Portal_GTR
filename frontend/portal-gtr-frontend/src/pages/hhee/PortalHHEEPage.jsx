@@ -261,7 +261,7 @@ function PortalHHEEPage() {
                                 <tr>
                                     <th>Habilitar</th>
                                     <th>Fecha</th>
-                                    <th>Marcas (Real)</th>
+                                    <th>Turno / Marcas</th>
                                     <th>HHEE (RRHH)</th>
                                     <th>HHEE a Aprobar</th>
                                     <th>Marcar Pendiente</th>
@@ -269,44 +269,66 @@ function PortalHHEEPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {resultados.map((dia) => (
-                                    <tr key={dia.fecha}>
-                                        <td>
-                                            <Form.Check 
-                                                type="checkbox"
-                                                checked={validaciones[dia.fecha]?.habilitado || false}
-                                                onChange={(e) => handleValidationChange(dia.fecha, 'habilitado', e.target.checked)}
-                                            />
-                                        </td>
-                                        <td>{dia.fecha}</td>
-                                        <td>{dia.marca_real_inicio || 'N/A'} - {dia.marca_real_fin || 'N/A'}</td>
-                                        <td>{(dia.hhee_autorizadas_despues_gv || 0).toFixed(2)} hrs</td>
-                                        <td>
-                                            <Form.Control 
-                                                type="number"
-                                                step="0.01"
-                                                value={validaciones[dia.fecha]?.hhee_aprobadas || 0}
-                                                onChange={(e) => handleValidationChange(dia.fecha, 'hhee_aprobadas', parseFloat(e.target.value))}
-                                                disabled={!validaciones[dia.fecha]?.habilitado || validaciones[dia.fecha]?.pendiente}
-                                                style={{ width: '80px' }}
-                                            />
-                                        </td>
-                                        <td>
-                                            <Form.Check 
-                                                type="checkbox"
-                                                label="Sí"
-                                                checked={validaciones[dia.fecha]?.pendiente || false}
-                                                onChange={(e) => handleValidationChange(dia.fecha, 'pendiente', e.target.checked)}
-                                                disabled={!validaciones[dia.fecha]?.habilitado}
-                                            />
-                                        </td>
-                                        <td>
-                                            <span className={`badge bg-${dia.estado_final === 'Validado' ? 'success' : dia.estado_final === 'Pendiente por Corrección' ? 'warning' : 'secondary'}`}>
-                                                {dia.estado_final}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {resultados.map((dia) => {
+                                    const esDescanso = (dia.inicio_turno_teorico === '00:00' && dia.fin_turno_teorico === '00:00') || dia.tipo_hhee === 'Día de Descanso';
+                                    const validacionDia = validaciones[dia.fecha] || {};
+
+                                    return (
+                                        <tr key={dia.fecha} style={{backgroundColor: validacionDia.pendiente ? '#fff9e6' : ''}}>
+                                            <td>
+                                                <Form.Check 
+                                                    type="checkbox"
+                                                    checked={validacionDia.habilitado || false}
+                                                    onChange={(e) => handleValidationChange(dia.fecha, 'habilitado', e.target.checked)}
+                                                />
+                                            </td>
+                                            <td>{dia.fecha}</td>
+                                            {/* CAMBIO: Mostramos el turno teórico junto a las marcas */}
+                                            <td>
+                                                <div>Turno: {esDescanso ? 'Descanso' : `${dia.inicio_turno_teorico || 'N/A'} - ${dia.fin_turno_teorico || 'N/A'}`}</div>
+                                                <div>Marcas: {dia.marca_real_inicio || 'N/A'} - {dia.marca_real_fin || 'N/A'}</div>
+                                            </td>
+                                            <td>{(dia.hhee_autorizadas_despues_gv || 0).toFixed(2)} hrs</td>
+                                            <td>
+                                                <Form.Control 
+                                                    type="number"
+                                                    step="0.01"
+                                                    value={validacionDia.hhee_aprobadas || 0}
+                                                    onChange={(e) => handleValidationChange(dia.fecha, 'hhee_aprobadas', parseFloat(e.target.value))}
+                                                    disabled={!validacionDia.habilitado || validacionDia.pendiente}
+                                                    style={{ width: '80px' }}
+                                                />
+                                            </td>
+                                            <td>
+                                                <Form.Check 
+                                                    type="checkbox"
+                                                    label="Sí"
+                                                    checked={validacionDia.pendiente || false}
+                                                    onChange={(e) => handleValidationChange(dia.fecha, 'pendiente', e.target.checked)}
+                                                    disabled={!validacionDia.habilitado}
+                                                />
+                                                {/* CAMBIO: Añadimos el selector de notas */}
+                                                {validacionDia.pendiente && (
+                                                    <Form.Select 
+                                                        size="sm" 
+                                                        className="mt-1" 
+                                                        value={validacionDia.nota || ''}
+                                                        onChange={(e) => handleValidationChange(dia.fecha, 'nota', e.target.value)}
+                                                    >
+                                                        <option value="">Seleccione motivo...</option>
+                                                        <option value="Pendiente de cambio de turno">Cambio de turno</option>
+                                                        <option value="Pendiente de corrección de marcas">Corrección de marcas</option>
+                                                    </Form.Select>
+                                                )}
+                                            </td>
+                                            <td>
+                                                <span className={`badge bg-${dia.estado_final === 'Validado' ? 'success' : dia.estado_final === 'Pendiente por Corrección' ? 'warning' : 'secondary'}`}>
+                                                    {dia.estado_final}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
                             </tbody>
                         </Table>
                     </Card.Body>
