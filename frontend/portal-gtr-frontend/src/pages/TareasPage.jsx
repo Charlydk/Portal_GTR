@@ -1,7 +1,7 @@
 // src/pages/TareasPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { Container, Row, Col, Card, Spinner, Alert, ListGroup, Button, Badge, Form } from 'react-bootstrap';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 import { API_BASE_URL } from '../api';
 import { useNavigate } from 'react-router-dom';
 

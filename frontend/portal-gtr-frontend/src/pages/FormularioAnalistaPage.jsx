@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext'; // ¡NUEVO! Importa useAuth
+import { useAuth } from '../hooks/useAuth'; // ¡NUEVO! Importa useAuth
 
 function FormularioAnalistaPage() {
   const { id } = useParams(); // Para saber si estamos editando

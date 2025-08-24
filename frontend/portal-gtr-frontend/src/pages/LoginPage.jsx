@@ -1,7 +1,7 @@
 // src/pages/LoginPage.jsx
 import React, { useState } from 'react'; // Asegúrate de que React y useState están importados
 import { useNavigate, Link } from 'react-router-dom'; // ¡NUEVO! Importa Link
-import { useAuth } from '../context/AuthContext'; // Importa el hook de autenticación
+import { useAuth } from '../hooks/useAuth'; // Importa el hook de autenticación
 
 function LoginPage() {
   const [email, setEmail] = useState('');

@@ -1,7 +1,7 @@
 // src/pages/DashboardPage.jsx
 import React, { useEffect, useState, useCallback } from 'react';
 import { Container, Row, Col, Card, Spinner, Alert, ListGroup, Button, Badge } from 'react-bootstrap';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 import { API_BASE_URL } from '../api';
 import { Link } from 'react-router-dom';
 

@@ -1,8 +1,7 @@
 // src/components/BitacoraCampana.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
-import { Card, Form, Button, Alert, Spinner, Table, Badge, Row, Col } from 'react-bootstrap';
+import { useAuth } from '../hooks/useAuth';import { Card, Form, Button, Alert, Spinner, Table, Badge, Row, Col } from 'react-bootstrap';
 import HistorialComentarios from './HistorialComentarios';
 
 const BitacoraCampana = ({ campanaId, campanaNombre }) => {

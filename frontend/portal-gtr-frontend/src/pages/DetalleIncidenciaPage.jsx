@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 // CORRECCIÓN: Añadimos 'Modal' a la lista de importaciones
 import { Container, Card, Spinner, Alert, ListGroup, Badge, Form, Button, Row, Col, Modal } from 'react-bootstrap';
 

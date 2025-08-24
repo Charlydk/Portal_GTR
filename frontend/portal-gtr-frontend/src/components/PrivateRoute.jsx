@@ -1,8 +1,7 @@
 // src/components/PrivateRoute.jsx
 import React from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext'; // Importa useAuth
-
+import { useAuth } from '../hooks/useAuth';
 /**
  * Componente de Ruta Privada para proteger rutas basadas en autenticación y roles.
  *

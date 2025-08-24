@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Container, Form, Button, Alert, Spinner, Card } from 'react-bootstrap';
 import { API_BASE_URL } from '../api';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 
 function FormularioAvisoPage() {
   const { id } = useParams(); // Para saber si estamos editando (id existe) o creando
