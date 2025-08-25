@@ -98,7 +98,12 @@ function ResultadoFila({ dia, validacionDia, onValidationChange, onSimpleChange,
                     <Form.Select size="sm" className="mt-1" value={dia.notas || ''} disabled>
                         <option>{dia.notas || 'Sin motivo'}</option>
                     </Form.Select>
-                    <Button variant="link" size="sm" className="p-0 mt-1" onClick={() => onRevalidar(dia.rut_con_formato, dia.fecha)}>
+                    <Button 
+                        variant="secondary" 
+                        size="sm" 
+                        className="w-100 mt-2" 
+                        onClick={() => onRevalidar(dia.rut_con_formato, dia.fecha)}
+                    >
                         Re-Validar
                     </Button>
                 </>

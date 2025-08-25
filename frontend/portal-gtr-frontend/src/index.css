@@ -89,3 +89,28 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+.form-control[type="date"],
+.form-control[type="time"] {
+    /* Posicionamos nuestro ícono de fondo */
+    background-image: url('data:image/svg+xml;utf8,<svg fill="currentColor" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center; /* Posición: 0.5rem desde la derecha, centrado verticalmente */
+    background-size: 1em; /* Tamaño del ícono */
+    
+    /* Añadimos espacio a la derecha para que el texto no se monte sobre el ícono */
+    padding-right: 2rem; 
+}
+
+/* Opcional: Para el input de hora, podemos usar un ícono de reloj */
+.form-control[type="time"] {
+    background-image: url('data:image/svg+xml;utf8,<svg fill="currentColor" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71V3.5z"/><path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0z"/></svg>');
+}
+
+/* Finalmente, le decimos al navegador que no intente dibujar su propio ícono
+  encima del nuestro (esto a veces es necesario).
+*/
+.form-control[type="date"]::-webkit-calendar-picker-indicator,
+.form-control[type="time"]::-webkit-calendar-picker-indicator {
+    display: none;
+}
