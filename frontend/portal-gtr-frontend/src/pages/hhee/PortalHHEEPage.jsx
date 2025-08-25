@@ -261,28 +261,33 @@ function PortalHHEEPage() {
                             Guardar Validaciones
                         </Button>
                     </Card.Header>
-                    <Card.Body>
-                    <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
-                        <Table striped bordered hover responsive>
-                            {/* 3. Encabezado Fijo */}
-                            <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: 'white' }}>
-                                <tr>
-                                    {isPendientesView && <th>Agente</th>}
-                                    <th>Fecha</th>
-                                    <th>Turno / Marcas</th>
-                                    <th>HHEE a Aprobar</th>
-                                    <th>HHEE Aprobadas (RRHH)</th>
-                                    <th>Marcar como Pendiente</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {resultados.map((dia) => (
-                                    <ResultadoFila key={dia.rut_con_formato ? `${dia.rut_con_formato}-${dia.fecha}` : dia.fecha} dia={dia} validacionDia={validaciones[dia.fecha]} onValidationChange={handleValidationChange} onSimpleChange={handleSimpleChange} onRevalidar={handleRevalidar} isPendientesView={isPendientesView} />
-                                ))}
-                            </tbody>
-                        </Table>
-                    </div>
-                    </Card.Body>
+                    <Card.Body style={{ maxHeight: '60vh', overflow: 'auto' }}>
+                    <Table striped bordered hover>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: 'white' }}>
+                            <tr>
+                                {isPendientesView && <th>Agente</th>}
+                                <th>Fecha</th>
+                                <th>Turno / Marcas</th>
+                                <th>HHEE a Aprobar</th>
+                                <th>HHEE Aprobadas (RRHH)</th>
+                                <th>Marcar como Pendiente</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {resultados.map((dia) => (
+                                <ResultadoFila
+                                    key={dia.rut_con_formato ? `${dia.rut_con_formato}-${dia.fecha}` : dia.fecha}
+                                    dia={dia}
+                                    validacionDia={validaciones[dia.fecha]}
+                                    onValidationChange={handleValidationChange}
+                                    onSimpleChange={handleSimpleChange}
+                                    onRevalidar={handleRevalidar}
+                                    isPendientesView={isPendientesView}
+                                />
+                            ))}
+                        </tbody>
+                    </Table>
+                </Card.Body>
                 </Card>
             )}
         </Container>
