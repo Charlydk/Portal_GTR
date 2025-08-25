@@ -37,48 +37,33 @@ def hhmm_to_decimal(time_str):
 
 async def obtener_datos_completos_periodo(token: str, ruts_limpios: list[str], fecha_inicio_dt: datetime, fecha_fin_dt: datetime):
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
-    payload = {
-        "StartDate": fecha_inicio_dt.strftime("%Y%m%d%H%M%S"),
-        "EndDate":   fecha_fin_dt.strftime("%Y%m%d%H%M%S"),
-        "UserIds":   ",".join(ruts_limpios)
-    }
-
-    print(f"    [GV Service] 📤 Enviando Payload: {payload}")
+    payload = { "StartDate": fecha_inicio_dt.strftime("%Y%m%d%H%M%S"), "EndDate": fecha_fin_dt.strftime("%Y%m%d%H%M%S"), "UserIds": ",".join(ruts_limpios) }
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(GEOVICTORIA_ATTENDANCE_URL, json=payload, headers=headers)
-            
-            print(f"    [GV Service] 📥 Respuesta recibida: Status={response.status_code}")
-            print(f"    [GV Service] 📄 Contenido Raw: {response.text}")
-
             response.raise_for_status()
             respuesta_gv = response.json()
 
         dias_procesados_total = []
         usuarios = respuesta_gv.get("Users", [])
         if not usuarios:
-            print("    [GV Service] 💬 La respuesta no contiene la sección 'Users' o está vacía.")
             return []
 
-        # --- INICIO DE LA LÓGICA CORREGIDA ---
         for usuario in usuarios:
-            rut_usuario = usuario.get('Id')
-            intervalos_por_fecha = {pd.to_datetime(intervalo.get("Date", ""), format="%Y%m%d%H%M%S").strftime('%Y-%m-%d'): intervalo for intervalo in usuario.get("PlannedInterval", [])}
+            # --- 👇👇👇 ESTE ES EL CAMBIO CLAVE 👇👇👇 ---
+            rut_usuario = usuario.get('Identifier') # Usamos 'Identifier' en lugar de 'Id'
             
+            intervalos_por_fecha = {pd.to_datetime(intervalo.get("Date", ""), format="%Y%m%d%H%M%S").strftime('%Y-%m-%d'): intervalo for intervalo in usuario.get("PlannedInterval", [])}
             current_date = fecha_inicio_dt.date()
             while current_date <= fecha_fin_dt.date():
                 fecha_actual_str = current_date.strftime('%Y-%m-%d')
                 datos_dia = {
-                    "fecha": fecha_actual_str, 
-                    "nombre_apellido": f"{usuario.get('Name', '')} {usuario.get('LastName', '')}".strip(), 
-                    "rut_limpio": rut_usuario, 
-                    "campaña": usuario.get('GroupDescription'), 
-                    "inicio_turno_teorico": None, "fin_turno_teorico": None, 
-                    "marca_real_inicio": None, "marca_real_fin": None, 
+                    "fecha": fecha_actual_str, "nombre_apellido": f"{usuario.get('Name', '')} {usuario.get('LastName', '')}".strip(), 
+                    "rut_limpio": rut_usuario, "campaña": usuario.get('GroupDescription'), 
+                    "inicio_turno_teorico": None, "fin_turno_teorico": None, "marca_real_inicio": None, "marca_real_fin": None, 
                     "hhee_autorizadas_antes_gv": 0, "hhee_autorizadas_despues_gv": 0
                 }
-                
                 intervalo_diario = intervalos_por_fecha.get(fecha_actual_str)
                 if intervalo_diario:
                     marcas = intervalo_diario.get("Punches", [])
@@ -86,28 +71,17 @@ async def obtener_datos_completos_periodo(token: str, ruts_limpios: list[str], f
                     salidas = [pd.to_datetime(p['Date'], format='%Y%m%d%H%M%S') for p in marcas if p.get('ShiftPunchType') == 'Salida']
                     turno = intervalo_diario.get("Shifts", [{}])[0]
                     datos_dia.update({
-                        "inicio_turno_teorico": turno.get('StartTime'), 
-                        "fin_turno_teorico": turno.get('ExitTime'), 
+                        "inicio_turno_teorico": turno.get('StartTime'), "fin_turno_teorico": turno.get('ExitTime'), 
                         "marca_real_inicio": min(entradas).strftime('%H:%M') if entradas else None, 
                         "marca_real_fin": max(salidas).strftime('%H:%M') if salidas else None, 
                         "hhee_autorizadas_antes_gv": hhmm_to_decimal(intervalo_diario.get("AuthorizedOvertimeBefore")), 
                         "hhee_autorizadas_despues_gv": hhmm_to_decimal(intervalo_diario.get("AuthorizedOvertimeAfter"))
                     })
-                
                 dias_procesados_total.append(datos_dia)
-                
-                # CORRECCIÓN CRÍTICA: Mover esta línea fuera del 'if' para evitar el bucle infinito
                 current_date += timedelta(days=1)
-        
-        # CORRECCIÓN CRÍTICA: Mover el return fuera del bucle 'for' para procesar todos los usuarios
         return dias_procesados_total
-        # --- FIN DE LA LÓGICA CORREGIDA ---
-
-    except httpx.RequestError as exc:
-        print(f"    [GV Service] ❌ Error de Conexión/Request HTTPX: {exc}")
-        return []
     except Exception as e:
-        print(f"    [GV Service] ❌ Error Inesperado en el Servicio: {e}")
+        print(f"Error en el servicio de GeoVictoria: {e}")
         return []
     
 def aplicar_logica_de_negocio(datos_procesados):
