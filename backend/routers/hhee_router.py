@@ -63,7 +63,7 @@ async def consultar_empleado(
     fecha_fin_dt = datetime.combine(consulta.fecha_fin, datetime.max.time())
 
     datos_gv = await geovictoria_service.obtener_datos_completos_periodo(
-        token, rut_limpio_api, fecha_inicio_dt, fecha_fin_dt
+        token, [rut_limpio_api], fecha_inicio_dt, fecha_fin_dt
     )
 
     if not datos_gv:
@@ -202,20 +202,58 @@ async def consultar_pendientes(
     db: AsyncSession = Depends(get_db),
     current_user: models.Analista = Depends(get_current_analista)
 ):
-    """
-    Devuelve una lista de todas las validaciones que están marcadas
-    como 'Pendiente por Corrección' para el supervisor actual.
-    """
     query = select(models.ValidacionHHEE).filter(
         models.ValidacionHHEE.estado == 'Pendiente por Corrección',
         models.ValidacionHHEE.supervisor_carga == current_user.email
-    ).order_by(models.ValidacionHHEE.fecha_hhee.desc())
-
+    ).order_by(models.ValidacionHHEE.nombre_apellido.asc(), models.ValidacionHHEE.fecha_hhee.asc())
+    
     result = await db.execute(query)
     pendientes = result.scalars().all()
 
-    # Simulamos la estructura de respuesta de la consulta principal para reutilizar la tabla
+    if not pendientes:
+        return {"datos_periodo": [], "nombre_agente": "Múltiples Agentes con Pendientes"}
+
+    token = await geovictoria_service.obtener_token_geovictoria()
+    
+    resultados_enriquecidos = []
+    for p in pendientes:
+        datos_dia_gv = {}
+        
+        if token:
+            try:
+                rut_limpio_api = p.rut.replace('-', '').replace('.', '').upper()
+                fecha_dt_inicio = datetime.combine(p.fecha_hhee, datetime.min.time())
+                fecha_dt_fin = datetime.combine(p.fecha_hhee, datetime.max.time())
+
+                datos_completos_gv = await geovictoria_service.obtener_datos_completos_periodo(
+                    token, [rut_limpio_api], fecha_dt_inicio, fecha_dt_fin
+                )
+                
+                if datos_completos_gv:
+                    fecha_str_buscada = p.fecha_hhee.strftime('%Y-%m-%d')
+                    datos_dia_gv = next((dia for dia in datos_completos_gv if dia.get('fecha') == fecha_str_buscada), {})
+            except Exception as e:
+                print(f"ADVERTENCIA: No se pudieron obtener datos de GV para el pendiente {p.rut} en fecha {p.fecha_hhee}: {e}")
+        
+        # Reactivamos la lógica de negocio
+        logica_negocio = geovictoria_service.aplicar_logica_de_negocio(datos_dia_gv)
+        
+        datos_dia_completo = {
+            **datos_dia_gv,
+            **logica_negocio,
+            "nombre_apellido": p.nombre_apellido,
+            "rut_con_formato": p.rut,
+            "fecha": p.fecha_hhee.strftime('%Y-%m-%d'),
+            "estado_final": 'Pendiente por Corrección',
+            "notas": p.notas,
+            "hhee_aprobadas_inicio": 0,
+            "hhee_aprobadas_fin": 0,
+            "hhee_aprobadas_descanso": 0,
+        }
+        
+        resultados_enriquecidos.append(datos_dia_completo)
+
     return {
-        "datos_periodo": pendientes,
+        "datos_periodo": resultados_enriquecidos,
         "nombre_agente": "Múltiples Agentes con Pendientes"
     }
