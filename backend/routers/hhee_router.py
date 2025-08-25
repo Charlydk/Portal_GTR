@@ -213,42 +213,40 @@ async def consultar_pendientes(
     if not pendientes:
         return {"datos_periodo": [], "nombre_agente": "Múltiples Agentes con Pendientes"}
 
+    ruts_limpios_unicos = list({p.rut.strip().replace('-', '').replace('.', '').upper() for p in pendientes})
+    fecha_min = min(p.fecha_hhee for p in pendientes)
+    fecha_max = max(p.fecha_hhee for p in pendientes)
+    fecha_inicio_dt = datetime.combine(fecha_min, datetime.min.time())
+    fecha_fin_dt = datetime.combine(fecha_max, datetime.max.time())
+
     token = await geovictoria_service.obtener_token_geovictoria()
-    
+    datos_completos_gv = []
+    if token:
+        try:
+            datos_completos_gv = await geovictoria_service.obtener_datos_completos_periodo(
+                token, ruts_limpios_unicos, fecha_inicio_dt, fecha_fin_dt
+            )
+        except Exception as e:
+            print(f"ADVERTENCIA: Falló la consulta masiva a GV: {e}")
+
+    lookup_data = {
+        (d.get('rut_limpio'), d.get('fecha')): d for d in datos_completos_gv
+    }
+
     resultados_enriquecidos = []
     for p in pendientes:
-        datos_dia_gv = {}
+        rut_limpio = p.rut.strip().replace('-', '').replace('.', '').upper()
+        fecha_str = p.fecha_hhee.strftime('%Y-%m-%d')
+        datos_dia_gv = lookup_data.get((rut_limpio, fecha_str), {})
         
-        if token:
-            try:
-                rut_limpio_api = p.rut.replace('-', '').replace('.', '').upper()
-                fecha_dt_inicio = datetime.combine(p.fecha_hhee, datetime.min.time())
-                fecha_dt_fin = datetime.combine(p.fecha_hhee, datetime.max.time())
-
-                datos_completos_gv = await geovictoria_service.obtener_datos_completos_periodo(
-                    token, [rut_limpio_api], fecha_dt_inicio, fecha_dt_fin
-                )
-                
-                if datos_completos_gv:
-                    fecha_str_buscada = p.fecha_hhee.strftime('%Y-%m-%d')
-                    datos_dia_gv = next((dia for dia in datos_completos_gv if dia.get('fecha') == fecha_str_buscada), {})
-            except Exception as e:
-                print(f"ADVERTENCIA: No se pudieron obtener datos de GV para el pendiente {p.rut} en fecha {p.fecha_hhee}: {e}")
-        
-        # Reactivamos la lógica de negocio
         logica_negocio = geovictoria_service.aplicar_logica_de_negocio(datos_dia_gv)
         
         datos_dia_completo = {
-            **datos_dia_gv,
-            **logica_negocio,
-            "nombre_apellido": p.nombre_apellido,
-            "rut_con_formato": p.rut,
-            "fecha": p.fecha_hhee.strftime('%Y-%m-%d'),
-            "estado_final": 'Pendiente por Corrección',
-            "notas": p.notas,
-            "hhee_aprobadas_inicio": 0,
-            "hhee_aprobadas_fin": 0,
-            "hhee_aprobadas_descanso": 0,
+            **datos_dia_gv, **logica_negocio,
+            "nombre_apellido": p.nombre_apellido, "rut_con_formato": p.rut,
+            "fecha": fecha_str, "estado_final": 'Pendiente por Corrección',
+            "notas": p.notas, "hhee_aprobadas_inicio": 0,
+            "hhee_aprobadas_fin": 0, "hhee_aprobadas_descanso": 0,
         }
         
         resultados_enriquecidos.append(datos_dia_completo)

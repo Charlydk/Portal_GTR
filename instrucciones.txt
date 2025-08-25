@@ -51,23 +51,3 @@ $env:PATH = "C:\Users\bernardino.20\Documents\node-v22.16.0-win-x64;" + $env:PAT
 
 MEJORAS A REALIZAR
 
-Dashboard 
-LISTO - agregar los avisos
-limitar las tareas completadas al dia
-
-Tareas
-asociar las tareas a los analistas que la procesaron
-crear boton para crear listas de checklist
-
-el supervisor deberia crear tareas sin necesidad de que esten asociadas a un analista, pero si asociada a una campaña.
-
-avisos
-
-LISTO - corregir cuando no tiene asignado campaña
-LISTO - al crear el aviso marcar si aviso notificacion o aviso tarea. si es tarea crear a partir de ese aviso una nueva tarea.
-
-bitacora de campaña
-
-agregar a comentario de entrada de bitacora un check si es fin de turno para no poner una hora
-
-agregar hora de fin de incidencia y seguir logica de la seccion de tareas (permitir darle seguimiento con comentarios)
