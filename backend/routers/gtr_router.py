@@ -7,6 +7,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import or_
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Union
+from datetime import datetime, date, time
+from sqlalchemy import func
 
 # --- Imports de la aplicación ---
 from database import get_db
