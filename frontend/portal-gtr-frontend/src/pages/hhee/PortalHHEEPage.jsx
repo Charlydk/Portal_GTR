@@ -223,22 +223,24 @@ function PortalHHEEPage() {
                 <Card.Body>
                     <Card.Title>Consultar Período de Empleado</Card.Title>
                     <Form onSubmit={handleConsulta}>
-                        <Row className="align-items-end g-3 mb-3">
-                            <Col md={3}>
+                    <Row className="align-items-end g-3 mb-3">
+                            <Col md={4}>
                                 <Form.Group controlId="rut-consulta"><Form.Label>RUT del Empleado</Form.Label><Form.Control type="text" placeholder="Ej: 12345678-9" value={rut} onChange={(e) => setRut(e.target.value)} required /></Form.Group>
                             </Col>
+                            <Col md={2}>
+                                {/* 1. Mover Período Rápido al lado del RUT */}
+                                <Form.Group controlId="select-periodo"><Form.Label>Período Rápido</Form.Label><Form.Select onChange={(e) => handlePeriodoChange(e.target.value)}><option value="">Seleccionar...</option><option value="actual">Periodo actual</option><option value="anterior">Periodo anterior (-1)</option></Form.Select></Form.Group>
+                            </Col>
                             <Col md={3}>
-                                <Form.Group controlId="fecha-inicio"><Form.Label>Fecha de Inicio</Form.Label><Form.Control type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} required /></Form.Group>
+                                <Form.Group controlId="fecha-inicio"><Form.Label>Fecha de Inicio</Form.Label><Form.Control type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} required  /></Form.Group>
                             </Col>
                             <Col md={3}>
                                 <Form.Group controlId="fecha-fin"><Form.Label>Fecha de Fin</Form.Label><Form.Control type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} required /></Form.Group>
                             </Col>
-                            <Col md={3}>
-                                <Form.Group controlId="select-periodo"><Form.Label>Período Rápido</Form.Label><Form.Select onChange={(e) => handlePeriodoChange(e.target.value)}><option value="">Seleccionar...</option><option value="actual">Periodo actual</option><option value="anterior">Periodo anterior (-1)</option></Form.Select></Form.Group>
-                            </Col>
                         </Row>
-                        <Row>
-                            <Col>
+                        {/* 2. Centrar los botones */}
+                        <Row className="justify-content-center mt-3">
+                            <Col xs="auto">
                                 <Button variant="primary" type="submit" disabled={loading} className="me-2">{loading && !isPendientesView ? <Spinner as="span" animation="border" size="sm" /> : 'Consultar'}</Button>
                                 <Button variant="warning" type="button" onClick={handleCargarPendientes} disabled={loading}>{loading && isPendientesView ? <Spinner as="span" animation="border" size="sm" /> : 'Mostrar Pendientes'}</Button>
                             </Col>
@@ -260,8 +262,10 @@ function PortalHHEEPage() {
                         </Button>
                     </Card.Header>
                     <Card.Body>
+                    <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
                         <Table striped bordered hover responsive>
-                            <thead>
+                            {/* 3. Encabezado Fijo */}
+                            <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: 'white' }}>
                                 <tr>
                                     {isPendientesView && <th>Agente</th>}
                                     <th>Fecha</th>
@@ -273,18 +277,11 @@ function PortalHHEEPage() {
                             </thead>
                             <tbody>
                                 {resultados.map((dia) => (
-                                    <ResultadoFila
-                                        key={dia.rut_con_formato ? `${dia.rut_con_formato}-${dia.fecha}` : dia.fecha}
-                                        dia={dia}
-                                        validacionDia={validaciones[dia.fecha]}
-                                        onValidationChange={handleValidationChange}
-                                        onSimpleChange={handleSimpleChange}
-                                        onRevalidar={handleRevalidar}
-                                        isPendientesView={isPendientesView}
-                                    />
+                                    <ResultadoFila key={dia.rut_con_formato ? `${dia.rut_con_formato}-${dia.fecha}` : dia.fecha} dia={dia} validacionDia={validaciones[dia.fecha]} onValidationChange={handleValidationChange} onSimpleChange={handleSimpleChange} onRevalidar={handleRevalidar} isPendientesView={isPendientesView} />
                                 ))}
                             </tbody>
                         </Table>
+                    </div>
                     </Card.Body>
                 </Card>
             )}
