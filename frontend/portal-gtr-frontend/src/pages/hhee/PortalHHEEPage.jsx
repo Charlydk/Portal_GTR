@@ -24,6 +24,23 @@ function PortalHHEEPage() {
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
     };
+
+    // Función para formatear nombres
+    const formatFullName = (fullName) => {
+    if (!fullName) return '';
+
+    // Divide el nombre en un array de palabras
+    const words = fullName.toLowerCase().split(' ');
+
+    // Mapea cada palabra para capitalizar la primera letra
+    const formattedWords = words.map(word => {
+        if (word.length === 0) return '';
+        return word.charAt(0).toUpperCase() + word.slice(1);
+    });
+
+    // Une las palabras de nuevo en una sola cadena
+    return formattedWords.join(' ');
+};
     
     const handlePeriodoChange = (seleccion) => {
         let fechaInicio, fechaFin;
@@ -217,13 +234,13 @@ function PortalHHEEPage() {
     };
     
     return (
-        <Container className="py-4">
-            <h1 className="mb-4">Portal de Carga de Horas Extras (HHEE)</h1>
-            <Card className="shadow-sm mb-4">
-                <Card.Body>
-                    <Card.Title>Consultar Período de Empleado</Card.Title>
+        <Container className="py-1">
+            <h3 className="mb-2">Portal de Carga de Horas Extras (HHEE)</h3>
+            <Card className="shadow-sm mb-1">
+                <Card.Body className="p-1">
+                    <Card.Title className="mb-2">Consultar Período de Empleado</Card.Title>
                     <Form onSubmit={handleConsulta}>
-                    <Row className="align-items-end g-3 mb-3">
+                    <Row className="align-items-end g-3 mb-2">
                             <Col md={4}>
                                 <Form.Group controlId="rut-consulta"><Form.Label>RUT del Empleado</Form.Label><Form.Control type="text" placeholder="Ej: 12345678-9" value={rut} onChange={(e) => setRut(e.target.value)} required /></Form.Group>
                             </Col>
@@ -256,35 +273,42 @@ function PortalHHEEPage() {
             {resultados.length > 0 && (
                 <Card className="shadow-sm">
                     <Card.Header className="d-flex justify-content-between align-items-center">
-                        <h4>Resultados para: {nombreAgente}</h4>
+                        <h4>Resultados para: {formatFullName(nombreAgente)}</h4>
                         <Button variant="success" onClick={handleGuardar} disabled={loading}>
                             Guardar Validaciones
                         </Button>
                     </Card.Header>
-                    <Card.Body style={{ maxHeight: '60vh', overflow: 'auto' }}>
+                    <Card.Body className='pt-0' style={{ maxHeight: '60vh', overflow: 'auto' }}>
                     <Table striped bordered hover>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 1, backgroundColor: 'white' }}>
                             <tr>
                                 {isPendientesView && <th>Agente</th>}
                                 <th>Fecha</th>
                                 <th>Turno / Marcas</th>
-                                <th>HHEE a Aprobar</th>
+                                <th>HHEE Declaradas (OP)</th>
                                 <th>HHEE Aprobadas (RRHH)</th>
                                 <th>Marcar como Pendiente</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {resultados.map((dia) => (
-                                <ResultadoFila
-                                    key={dia.rut_con_formato ? `${dia.rut_con_formato}-${dia.fecha}` : dia.fecha}
-                                    dia={dia}
-                                    validacionDia={validaciones[dia.fecha]}
-                                    onValidationChange={handleValidationChange}
-                                    onSimpleChange={handleSimpleChange}
-                                    onRevalidar={handleRevalidar}
-                                    isPendientesView={isPendientesView}
-                                />
-                            ))}
+                            {resultados.map((dia) => {
+                                // Apply the formatting to the nombre_apellido property
+                                const formattedDia = {
+                                    ...dia,
+                                    nombre_apellido: formatFullName(dia.nombre_apellido)
+                                };
+                                return (
+                                    <ResultadoFila
+                                        key={dia.rut_con_formato ? `${dia.rut_con_formato}-${dia.fecha}` : dia.fecha}
+                                        dia={formattedDia}
+                                        validacionDia={validaciones[dia.fecha]}
+                                        onValidationChange={handleValidationChange}
+                                        onSimpleChange={handleSimpleChange}
+                                        onRevalidar={handleRevalidar}
+                                        isPendientesView={isPendientesView}
+                                    />
+                                );
+                            })}
                         </tbody>
                     </Table>
                 </Card.Body>

@@ -57,6 +57,9 @@ function Navbar() {
                                 {(user.role === 'SUPERVISOR' || user.role === 'RESPONSABLE') && (
                                     <li className="nav-item">
                                         <Link className="nav-link" to="/asignar-campanas">Asignar Campañas</Link>
+                                    </li>,
+                                    <li className="nav-item">
+                                        <Link className="nav-link" to="/hhee/portal">Portal HHEE</Link>
                                     </li>
                                 )}
                             </>

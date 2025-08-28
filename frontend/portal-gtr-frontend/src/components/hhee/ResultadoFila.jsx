@@ -134,10 +134,10 @@ function ResultadoFila({ dia, validacionDia, onValidationChange, onSimpleChange,
     const renderHHEERRHH = () => {
         if (esDescanso) {
             const totalDescansoRRHH = (dia.hhee_autorizadas_antes_gv || 0) + (dia.hhee_autorizadas_despues_gv || 0);
-            return totalDescansoRRHH > 0 ? `Descanso: ${decimalToHHMM(totalDescansoRRHH)}` : "";
+            return totalDescansoRRHH > 0 ? <span className="text-primary">☑️☑️ Descanso: {decimalToHHMM(totalDescansoRRHH)}</span> : "";
         }
-        const antes = dia.hhee_autorizadas_antes_gv > 0 ? `Antes: ${decimalToHHMM(dia.hhee_autorizadas_antes_gv)}` : null;
-        const despues = dia.hhee_autorizadas_despues_gv > 0 ? `Después: ${decimalToHHMM(dia.hhee_autorizadas_despues_gv)}` : null;
+        const antes = dia.hhee_autorizadas_antes_gv > 0 ? <span className="text-primary">☑️☑️ Antes: {decimalToHHMM(dia.hhee_autorizadas_antes_gv)}</span> : null;
+        const despues = dia.hhee_autorizadas_despues_gv > 0 ? <span className="text-primary"> ☑️☑️ Después: {decimalToHHMM(dia.hhee_autorizadas_despues_gv)}</span> : null;
         if (!antes && !despues) return "";
         return (<>{antes && <div>{antes}</div>}{despues && <div>{despues}</div>}</>);
     };

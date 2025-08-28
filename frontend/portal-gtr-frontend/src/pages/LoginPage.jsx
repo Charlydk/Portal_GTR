@@ -18,7 +18,7 @@ function LoginPage() {
 
     try {
       await login(email, password); // Llama a la función de login del contexto
-      navigate('/dashboard'); // Redirige al dashboard o a la página principal después del login exitoso
+      navigate('/'); // Redirige al dashboard o a la página principal después del login exitoso
     } catch (err) {
       setError(err.message || 'Error desconocido al iniciar sesión.'); // Muestra el error
     } finally {
