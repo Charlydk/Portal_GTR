@@ -51,7 +51,7 @@ async def obtener_datos_completos_periodo(token: str, ruts_limpios: list[str], f
             return []
 
         for usuario in usuarios:
-            # --- 👇👇👇 ESTE ES EL CAMBIO CLAVE 👇👇👇 ---
+            
             rut_usuario = usuario.get('Identifier') # Usamos 'Identifier' en lugar de 'Id'
             
             intervalos_por_fecha = {pd.to_datetime(intervalo.get("Date", ""), format="%Y%m%d%H%M%S").strftime('%Y-%m-%d'): intervalo for intervalo in usuario.get("PlannedInterval", [])}
